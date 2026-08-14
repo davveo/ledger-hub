@@ -46,7 +46,9 @@ func main() {
 		UsePhase3(repos.Journal, repos.FxRate, repos.ExchangeLeg, limiter, cluster.SameShard)
 	query := application.NewQueryService(repos.Entry, repos.Freeze).WithJournal(repos.Journal)
 	recon := application.NewReconcileService(repos.Entry, repos.Account, repos.Freeze, repos.Reconcile).
-		UsePhase3(repos.ExchangeLeg, repos.Journal)
+		UsePhase3(repos.ExchangeLeg, repos.Journal).
+		UseFx(repos.FxRate).
+		WithOutput(cfg.App.ReconcileDir)
 	fxSvc := application.NewFxService(repos.FxRate)
 	tenantSvc := application.NewTenantService(repos.Tenant)
 	_ = tenantSvc.Save(context.Background(), &domain.Tenant{

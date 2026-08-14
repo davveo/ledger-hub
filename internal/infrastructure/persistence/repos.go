@@ -324,6 +324,22 @@ func (r *FreezeRepo) UpdateStatus(ctx context.Context, freezeID string, from, to
 	return nil
 }
 
+func (r *FreezeRepo) Update(ctx context.Context, f *domain.FreezeOrder) error {
+	res := dbFrom(ctx, r.db).Model(&LedgerFreeze{}).
+		Where("freeze_id = ?", f.FreezeID).
+		Updates(map[string]interface{}{
+			"amount": f.Amount,
+			"status": string(f.Status),
+		})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func (r *FreezeRepo) ListExpired(ctx context.Context, now time.Time, limit int) ([]*domain.FreezeOrder, error) {
 	var out []*domain.FreezeOrder
 	for _, db := range scanDBs(ctx, r.cluster, r.db) {

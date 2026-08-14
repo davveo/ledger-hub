@@ -18,38 +18,38 @@
 
 ## P0 · 记账内核补全
 
-- [ ] **冲正命令 `Reverse`**
+- [x] **冲正命令 `Reverse`**
   - 常量 `JournalReverse` 已有，无 `CmdReverse`、无 HTTP、无整笔回滚。
   - 按技术方案 11.5：新 `biz_no` + `related_biz_no` 指向原单；保留原流水。
   - Exchange 必须整笔 Journal 回滚（from / to / fee / clearing），禁止只改一侧。
-- [ ] **Credit / Debit / Freeze 也落 Journal**
+- [x] **Credit / Debit / Freeze 也落 Journal**
   - 目前仅 Transfer / Exchange 写 `ledger_journal`；单边入账无法按凭证对账。
   - 建议 `journal_type=posting`，可选挂 `system:point_issuance` / `pending_settlement`。
-- [ ] **过期入系统科目**
+- [x] **过期入系统科目**
   - 现实现只 `Debit` 用户，未贷记 `point_sink`，过期后资产总量对不上。
   - 改为 Transfer 到 `system_subject:point_sink`，并进日终 POINT 对账。
-- [ ] **账户 / 资产状态真正生效**
+- [x] **账户 / 资产状态真正生效**
   - `AccountDisabled`、`AssetDisabled`、`holder_types` 已建模，开户与记账未校验。
   - 停用账户禁止变动；资产未允许的 holder_type 拒绝懒开户。
-- [ ] **部分 Capture**
+- [x] **部分 Capture**
   - 冻结单只能整单确认。订单部分履约需要 `capture_amount <= freeze.amount`，余量继续冻或自动 Release。
-- [ ] **跨分片 Transfer 的标准路径**
+- [x] **跨分片 Transfer 的标准路径**
   - 现跨片直接 `42204`。技术方案要求经系统科目轧差（两段记账 + 同一业务 `related_biz_no`），而不是永远禁止。
 
 ---
 
 ## P0 · 对账与汇率
 
-- [ ] **L4 按兑换腿核对金额 / 费率 / `rate_id`**
+- [x] **L4 按兑换腿核对金额 / 费率 / `rate_id`**
   - 当前只检查「有用户 OUT + 用户 IN + 至少两种 asset」，不核 from/to/fee 与快照。
   - 应用 `ledger_exchange_leg` + `ledger_fx_rate` 做兑换等式校验。
-- [ ] **对账产物落盘**
+- [x] **对账产物落盘**
   - CSV 只塞在 JSON `files` 里。补：`recon_*` / `diff_*` / `balance_tie_out_*` / `fx_journal_*` 可下载或写对象存储。
-- [ ] **Worker 对账覆盖全部租户 / 资产**
+- [x] **Worker 对账覆盖全部租户 / 资产**
   - `runDailyReconcile` 只用 `default_tenant` 且 `source_system/asset` 为空，多租户会漏跑。
-- [ ] **L5 支付渠道对账（可选）**
+- [x] **L5 支付渠道对账（可选）**
   - 支付成功金额 ↔ `Credit(BALANCE_*)`，按币种分文件；Connector 侧导出渠道清单。
-- [ ] **汇率 Feed**
+- [x] **汇率 Feed**
   - `rate_source=feed` 已预留。Worker 定时拉牌价写入 `ledger_fx_rate`（账本仍不负责行情对错）。
 
 ---

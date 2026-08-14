@@ -54,13 +54,15 @@ func (e *ExpireEngine) Run(ctx context.Context, tenantID string, now time.Time) 
 				continue
 			}
 			bizNo := "worker:expire:" + a.AssetCode + ":" + acc.HolderID + ":" + now.UTC().Format("2006-01-02")
+			sink := domain.Holder{Type: domain.HolderSystemSubject, ID: domain.SystemPointSink}
 			_, err = e.books.Execute(ctx, domain.CommandRequest{
-				Command:      domain.CmdDebit,
+				Command:      domain.CmdTransfer,
 				TenantID:     tenantID,
 				SourceSystem: "worker",
 				BizType:      "expire",
 				BizNo:        bizNo,
 				Holder:       domain.Holder{Type: acc.HolderType, ID: acc.HolderID},
+				ToHolder:     &sink,
 				AssetCode:    a.AssetCode,
 				Amount:       amt,
 			})

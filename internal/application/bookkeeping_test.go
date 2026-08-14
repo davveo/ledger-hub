@@ -177,8 +177,22 @@ func (m *mem) UpdateStatus(_ context.Context, id string, from, to domain.FreezeS
 func (m *mem) ListExpired(_ context.Context, _ time.Time, _ int) ([]*domain.FreezeOrder, error) {
 	return nil, nil
 }
-func (m *mem) ListFrozen(_ context.Context, _, _ string) ([]*domain.FreezeOrder, error) {
-	return nil, nil
+func (m *mem) ListFrozen(_ context.Context, tenant, asset string) ([]*domain.FreezeOrder, error) {
+	var out []*domain.FreezeOrder
+	for _, f := range m.freezes {
+		if f.Status != domain.FreezeFrozen {
+			continue
+		}
+		if tenant != "" && f.TenantID != tenant {
+			continue
+		}
+		if asset != "" && f.AssetCode != asset {
+			continue
+		}
+		cp := *f
+		out = append(out, &cp)
+	}
+	return out, nil
 }
 
 func (m *mem) GetIdem(_ context.Context, tenant, src, biz string, cmd domain.Command) (*domain.IdempotencyRecord, error) {
@@ -229,6 +243,17 @@ func (r memFreeze) GetByBizNo(ctx context.Context, t, b string) (*domain.FreezeO
 func (r memFreeze) UpdateStatus(ctx context.Context, id string, from, to domain.FreezeStatus) error {
 	return r.m.UpdateStatus(ctx, id, from, to)
 }
+func (r memFreeze) Update(_ context.Context, f *domain.FreezeOrder) error {
+	cur := r.m.freezes[f.FreezeID]
+	if cur == nil {
+		return domain.ErrNotFound
+	}
+	cur.Amount = f.Amount
+	cur.Status = f.Status
+	cur.ExpireAt = f.ExpireAt
+	r.m.fzBiz[f.TenantID+"|"+f.BizNo] = cur
+	return nil
+}
 func (r memFreeze) ListExpired(ctx context.Context, n time.Time, l int) ([]*domain.FreezeOrder, error) {
 	return r.m.ListExpired(ctx, n, l)
 }
@@ -251,8 +276,8 @@ func setupBooks(t *testing.T) (*Bookkeeping, *mem) {
 	acl := NewACL([]domain.ACLRule{
 		{SourceSystem: "campaign", Commands: []string{"Credit"}, Assets: []string{"POINT"}},
 		{SourceSystem: "order", Commands: []string{"Freeze", "Capture", "Release"}, Assets: []string{"POINT"}},
-		{SourceSystem: "wallet", Commands: []string{"Transfer", "Credit", "Exchange"}, Assets: []string{"POINT", "BALANCE_CNY", "BALANCE_USD"}},
-		{SourceSystem: "worker", Commands: []string{"Release", "Debit"}, Assets: []string{"*"}},
+		{SourceSystem: "wallet", Commands: []string{"Transfer", "Credit", "Debit", "Exchange", "Reverse"}, Assets: []string{"POINT", "BALANCE_CNY", "BALANCE_USD"}},
+		{SourceSystem: "worker", Commands: []string{"Release", "Debit", "Transfer", "Reverse"}, Assets: []string{"*"}},
 	})
 	b := NewBookkeeping(memTx{}, st, memAccount{st}, memEntry{st}, memFreeze{st}, memIdem{st}, acl)
 	return b, st
@@ -434,7 +459,7 @@ func TestExchangeSlippageRejected(t *testing.T) {
 
 func TestCrossShardTransferRejected(t *testing.T) {
 	ctx := context.Background()
-	b, _ := setupBooks(t)
+	b, st := setupBooks(t)
 	b.UsePhase3(nil, nil, nil, nil, func(a, b string) bool { return a == b })
 	from := domain.Holder{Type: domain.HolderUser, ID: "u1"}
 	to := domain.Holder{Type: domain.HolderUser, ID: "u2"}
@@ -444,11 +469,134 @@ func TestCrossShardTransferRejected(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := b.Execute(ctx, domain.CommandRequest{
+	res, err := b.Execute(ctx, domain.CommandRequest{
 		Command: domain.CmdTransfer, TenantID: "t_default", SourceSystem: "wallet",
 		BizNo: "wallet:tf-cross", Holder: from, ToHolder: &to, AssetCode: "POINT", Amount: 10,
 	})
-	if !domain.Is(err, domain.CodeCrossShard) {
-		t.Fatalf("want cross shard, got %v", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Account.Available != "20" || res.ToAccount.Available != "10" {
+		t.Fatalf("cross shard result %+v", res)
+	}
+	var pendingIn, pendingOut bool
+	for _, e := range st.entries {
+		if e.HolderID != domain.SystemPendingSettlement {
+			continue
+		}
+		if e.Direction == domain.DirIN && e.Amount == 10 {
+			pendingIn = true
+		}
+		if e.Direction == domain.DirOUT && e.Amount == 10 {
+			pendingOut = true
+		}
+	}
+	if !pendingIn || !pendingOut {
+		t.Fatalf("want pending_settlement both legs, in=%v out=%v", pendingIn, pendingOut)
+	}
+}
+
+func TestReverseCredit(t *testing.T) {
+	ctx := context.Background()
+	b, st := setupBooks(t)
+	holder := domain.Holder{Type: domain.HolderUser, ID: "u_rev"}
+	if _, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdCredit, TenantID: "t_default", SourceSystem: "wallet",
+		BizNo: "wallet:rev-src", Holder: holder, AssetCode: "POINT", Amount: 50,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdReverse, TenantID: "t_default", SourceSystem: "wallet",
+		BizNo: "wallet:rev-1", RelatedBizNo: "wallet:rev-src",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.JournalID == "" {
+		t.Fatal("want reverse journal")
+	}
+	acc, err := memAccount{st}.Get(ctx, "t_default", holder, "POINT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acc.Available != 0 {
+		t.Fatalf("available=%d", acc.Available)
+	}
+}
+
+func TestPartialCapture(t *testing.T) {
+	ctx := context.Background()
+	b, _ := setupBooks(t)
+	holder := domain.Holder{Type: domain.HolderUser, ID: "u_cap"}
+	if _, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdCredit, TenantID: "t_default", SourceSystem: "campaign",
+		BizNo: "campaign:pc", Holder: holder, AssetCode: "POINT", Amount: 100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fz, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdFreeze, TenantID: "t_default", SourceSystem: "order",
+		BizNo: "order:freeze:pc", Holder: holder, AssetCode: "POINT", Amount: 40,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	part, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdCapture, TenantID: "t_default", SourceSystem: "order",
+		BizNo: "order:capture:pc1", FreezeID: fz.FreezeID, Amount: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if part.Account.Available != "60" || part.Account.Frozen != "30" {
+		t.Fatalf("partial capture %+v", part.Account)
+	}
+	rest, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdCapture, TenantID: "t_default", SourceSystem: "order",
+		BizNo: "order:capture:pc2", FreezeID: fz.FreezeID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rest.Account.Available != "60" || rest.Account.Frozen != "0" {
+		t.Fatalf("rest capture %+v", rest.Account)
+	}
+}
+
+func TestDisabledAccountRejected(t *testing.T) {
+	ctx := context.Background()
+	b, st := setupBooks(t)
+	holder := domain.Holder{Type: domain.HolderUser, ID: "u_off"}
+	res, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdCredit, TenantID: "t_default", SourceSystem: "campaign",
+		BizNo: "campaign:off1", Holder: holder, AssetCode: "POINT", Amount: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.accs[res.Account.AccountID].Status = domain.AccountDisabled
+	_, err = b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdCredit, TenantID: "t_default", SourceSystem: "campaign",
+		BizNo: "campaign:off2", Holder: holder, AssetCode: "POINT", Amount: 1,
+	})
+	if !domain.Is(err, domain.CodeInvalidParam) {
+		t.Fatalf("want disabled account, got %v", err)
+	}
+}
+
+func TestHolderTypesRejected(t *testing.T) {
+	ctx := context.Background()
+	b, st := setupBooks(t)
+	_ = st.Save(ctx, &domain.Asset{
+		TenantID: "t_default", AssetCode: "POINT", Name: "积分", Status: domain.AssetActive,
+		HolderTypes: []string{"merchant"}, FreezeSupported: true,
+	})
+	_, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdCredit, TenantID: "t_default", SourceSystem: "campaign",
+		BizNo: "campaign:ht", Holder: domain.Holder{Type: domain.HolderUser, ID: "u1"}, AssetCode: "POINT", Amount: 1,
+	})
+	if !domain.Is(err, domain.CodeInvalidParam) {
+		t.Fatalf("want holder type rejected, got %v", err)
 	}
 }

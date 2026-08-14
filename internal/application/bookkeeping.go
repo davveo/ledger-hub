@@ -84,6 +84,8 @@ func (s *Bookkeeping) Execute(ctx context.Context, req domain.CommandRequest) (*
 		return s.transfer(ctx, req)
 	case domain.CmdExchange:
 		return s.exchange(ctx, req)
+	case domain.CmdReverse:
+		return s.reverse(ctx, req)
 	default:
 		return nil, domain.NewError(domain.CodeInvalidParam, "未知命令")
 	}
@@ -113,8 +115,14 @@ func (s *Bookkeeping) mutate(ctx context.Context, req domain.CommandRequest, fn 
 		if asset.Status != domain.AssetActive {
 			return domain.NewError(domain.CodeInvalidParam, "资产未启用")
 		}
+		if err := HolderAllowed(asset, req.Holder); err != nil {
+			return err
+		}
 		acc, err := s.getOrOpenLocked(ctx, req.TenantID, req.Holder, req.AssetCode)
 		if err != nil {
+			return err
+		}
+		if err := AccountUsable(acc); err != nil {
 			return err
 		}
 		if err := s.limiter.Check(ctx, req); err != nil {
@@ -133,37 +141,64 @@ func (s *Bookkeeping) mutate(ctx context.Context, req domain.CommandRequest, fn 
 	return result, err
 }
 
-func applyCredit(ctx context.Context, s *Bookkeeping, req domain.CommandRequest, acc *domain.Account, _ *domain.Asset) (*domain.CommandResult, error) {
+func applyCredit(ctx context.Context, s *Bookkeeping, req domain.CommandRequest, acc *domain.Account, asset *domain.Asset) (*domain.CommandResult, error) {
 	if req.Amount <= 0 {
 		return nil, domain.ErrInvalidParam
+	}
+	journalID := idgen.New("jnl_")
+	if err := s.writeJournal(ctx, &domain.Journal{
+		JournalID: journalID, TenantID: req.TenantID, BizNo: req.BizNo,
+		JournalType: domain.JournalPosting, Status: "posted", EntriesCount: 2,
+	}); err != nil {
+		return nil, err
 	}
 	acc.Available += req.Amount
 	if err := s.accs.UpdateBalances(ctx, acc); err != nil {
 		return nil, err
 	}
-	entry, err := s.writeEntry(ctx, req, acc, domain.DirIN, req.Amount, "", "")
+	entry, err := s.writeEntry(ctx, req, acc, domain.DirIN, req.Amount, "", journalID)
 	if err != nil {
 		return nil, err
 	}
-	return newResult(acc, []string{entry.EntryID}, "", ""), nil
+	ids := []string{entry.EntryID}
+	if cid, err := s.postSystem(ctx, req, domain.SystemPointIssuance, acc.AssetCode, domain.DirOUT, req.Amount, journalID); err != nil {
+		return nil, err
+	} else if cid != "" {
+		ids = append(ids, cid)
+	}
+	_ = asset
+	return newResult(acc, ids, "", journalID), nil
 }
 
 func applyDebit(ctx context.Context, s *Bookkeeping, req domain.CommandRequest, acc *domain.Account, asset *domain.Asset) (*domain.CommandResult, error) {
 	if req.Amount <= 0 {
 		return nil, domain.ErrInvalidParam
 	}
-	if acc.Available < req.Amount && !asset.OverdraftAllowed {
+	if acc.Available < req.Amount && !asset.OverdraftAllowed && !systemOverdraft(acc) {
 		return nil, domain.ErrInsufficient
+	}
+	journalID := idgen.New("jnl_")
+	if err := s.writeJournal(ctx, &domain.Journal{
+		JournalID: journalID, TenantID: req.TenantID, BizNo: req.BizNo,
+		JournalType: domain.JournalPosting, Status: "posted", EntriesCount: 2,
+	}); err != nil {
+		return nil, err
 	}
 	acc.Available -= req.Amount
 	if err := s.accs.UpdateBalances(ctx, acc); err != nil {
 		return nil, err
 	}
-	entry, err := s.writeEntry(ctx, req, acc, domain.DirOUT, req.Amount, "", "")
+	entry, err := s.writeEntry(ctx, req, acc, domain.DirOUT, req.Amount, "", journalID)
 	if err != nil {
 		return nil, err
 	}
-	return newResult(acc, []string{entry.EntryID}, "", ""), nil
+	ids := []string{entry.EntryID}
+	if cid, err := s.postSystem(ctx, req, domain.SystemPointSink, acc.AssetCode, domain.DirIN, req.Amount, journalID); err != nil {
+		return nil, err
+	} else if cid != "" {
+		ids = append(ids, cid)
+	}
+	return newResult(acc, ids, "", journalID), nil
 }
 
 func applyFreeze(ctx context.Context, s *Bookkeeping, req domain.CommandRequest, acc *domain.Account, asset *domain.Asset) (*domain.CommandResult, error) {
@@ -194,11 +229,18 @@ func applyFreeze(ctx context.Context, s *Bookkeeping, req domain.CommandRequest,
 	if err := s.freezes.Create(ctx, fz); err != nil {
 		return nil, err
 	}
-	entry, err := s.writeEntry(ctx, req, acc, domain.DirOUT, req.Amount, fz.FreezeID, "")
+	journalID := idgen.New("jnl_")
+	if err := s.writeJournal(ctx, &domain.Journal{
+		JournalID: journalID, TenantID: req.TenantID, BizNo: req.BizNo,
+		JournalType: domain.JournalPosting, Status: "posted", EntriesCount: 1,
+	}); err != nil {
+		return nil, err
+	}
+	entry, err := s.writeEntry(ctx, req, acc, domain.DirOUT, req.Amount, fz.FreezeID, journalID)
 	if err != nil {
 		return nil, err
 	}
-	return newResult(acc, []string{entry.EntryID}, fz.FreezeID, ""), nil
+	return newResult(acc, []string{entry.EntryID}, fz.FreezeID, journalID), nil
 }
 
 func (s *Bookkeeping) resolveFreezeHolder(ctx context.Context, req *domain.CommandRequest) error {
@@ -269,28 +311,56 @@ func (s *Bookkeeping) captureOrRelease(ctx context.Context, req domain.CommandRe
 		if locked.Frozen < fz.Amount {
 			return domain.NewError(domain.CodeInternal, "冻结余额与冻结单不一致")
 		}
-		locked.Frozen -= fz.Amount
-		target := domain.FreezeCaptured
+		if err := AccountUsable(locked); err != nil {
+			return err
+		}
+		remain := fz.Amount
+		capAmt := remain
+		if capture && req.Amount > 0 {
+			if req.Amount > remain {
+				return domain.NewError(domain.CodeInvalidParam, "Capture 金额不能大于剩余冻结")
+			}
+			capAmt = req.Amount
+		}
+		locked.Frozen -= capAmt
 		dir := domain.DirOUT
 		if !capture {
-			locked.Available += fz.Amount
-			target = domain.FreezeReleased
+			locked.Available += capAmt
 			dir = domain.DirIN
 		}
 		if err := s.accs.UpdateBalances(ctx, locked); err != nil {
 			return err
 		}
-		if err := s.freezes.UpdateStatus(ctx, fz.FreezeID, domain.FreezeFrozen, target); err != nil {
-			return err
+		switch {
+		case !capture:
+			if err := s.freezes.UpdateStatus(ctx, fz.FreezeID, domain.FreezeFrozen, domain.FreezeReleased); err != nil {
+				return err
+			}
+		case capAmt < remain:
+			fz.Amount = remain - capAmt
+			if err := s.freezes.Update(ctx, fz); err != nil {
+				return err
+			}
+		default:
+			if err := s.freezes.UpdateStatus(ctx, fz.FreezeID, domain.FreezeFrozen, domain.FreezeCaptured); err != nil {
+				return err
+			}
 		}
 		req.AssetCode = locked.AssetCode
 		req.Holder = domain.Holder{Type: locked.HolderType, ID: locked.HolderID}
-		req.Amount = fz.Amount
-		entry, err := s.writeEntry(ctx, req, locked, dir, fz.Amount, fz.FreezeID, "")
+		req.Amount = capAmt
+		journalID := idgen.New("jnl_")
+		if err := s.writeJournal(ctx, &domain.Journal{
+			JournalID: journalID, TenantID: req.TenantID, BizNo: req.BizNo,
+			JournalType: domain.JournalPosting, Status: "posted", EntriesCount: 1,
+		}); err != nil {
+			return err
+		}
+		entry, err := s.writeEntry(ctx, req, locked, dir, capAmt, fz.FreezeID, journalID)
 		if err != nil {
 			return err
 		}
-		res := newResult(locked, []string{entry.EntryID}, fz.FreezeID, "")
+		res := newResult(locked, []string{entry.EntryID}, fz.FreezeID, journalID)
 		if err := s.saveIdempotency(ctx, req, hash, res); err != nil {
 			return err
 		}
@@ -311,8 +381,67 @@ func (s *Bookkeeping) transfer(ctx context.Context, req domain.CommandRequest) (
 		return nil, domain.ErrInvalidParam
 	}
 	if s.sameShard != nil && req.ToHolder != nil && !s.sameShard(req.Holder.ID, req.ToHolder.ID) {
-		return nil, domain.ErrCrossShard
+		return s.crossShardTransfer(ctx, req)
 	}
+	return s.transferSameShard(ctx, req)
+}
+
+func (s *Bookkeeping) crossShardTransfer(ctx context.Context, req domain.CommandRequest) (*domain.CommandResult, error) {
+	hash := requestHash(req)
+	ctxFrom := domain.WithHolder(ctx, req.Holder.ID)
+	var replay *domain.CommandResult
+	if err := s.tx.WithinTx(ctxFrom, func(ctx context.Context) error {
+		r, err := s.checkIdempotency(ctx, req, hash)
+		replay = r
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	if replay != nil {
+		return replay, nil
+	}
+	pending := domain.Holder{Type: domain.HolderSystemSubject, ID: domain.SystemPendingSettlement}
+	outReq := req
+	outReq.ToHolder = &pending
+	outReq.BizNo = req.BizNo + ":xshard:out"
+	outReq.RelatedBizNo = req.BizNo
+	res1, err := s.transferSameShard(ctxFrom, outReq)
+	if err != nil {
+		return nil, err
+	}
+	ctxTo := domain.WithHolder(ctx, req.ToHolder.ID)
+	inReq := req
+	inReq.Holder = pending
+	inReq.BizNo = req.BizNo + ":xshard:in"
+	inReq.RelatedBizNo = req.BizNo
+	res2, err := s.transferSameShard(ctxTo, inReq)
+	if err != nil {
+		_, _ = s.reverse(ctxFrom, domain.CommandRequest{
+			Command:      domain.CmdReverse,
+			TenantID:     req.TenantID,
+			SourceSystem: req.SourceSystem,
+			BizType:      "xshard_rollback",
+			BizNo:        req.BizNo + ":xshard:rollback",
+			RelatedBizNo: outReq.BizNo,
+			Holder:       req.Holder,
+			AssetCode:    req.AssetCode,
+		})
+		return nil, err
+	}
+	res := &domain.CommandResult{
+		Accepted:  true,
+		JournalID: res2.JournalID,
+		EntryIDs:  append(append([]string{}, res1.EntryIDs...), res2.EntryIDs...),
+		Account:   res1.Account,
+		ToAccount: res2.ToAccount,
+	}
+	_ = s.tx.WithinTx(ctxFrom, func(ctx context.Context) error {
+		return s.saveIdempotency(ctx, req, hash, res)
+	})
+	return res, nil
+}
+
+func (s *Bookkeeping) transferSameShard(ctx context.Context, req domain.CommandRequest) (*domain.CommandResult, error) {
 	hash := requestHash(req)
 	var result *domain.CommandResult
 	err := s.tx.WithinTx(ctx, func(ctx context.Context) error {
@@ -332,6 +461,15 @@ func (s *Bookkeeping) transfer(ctx context.Context, req domain.CommandRequest) (
 			if domain.Is(err, domain.CodeNotFound) {
 				return domain.ErrInvalidParam
 			}
+			return err
+		}
+		if asset.Status != domain.AssetActive {
+			return domain.NewError(domain.CodeInvalidParam, "资产未启用")
+		}
+		if err := HolderAllowed(asset, req.Holder); err != nil {
+			return err
+		}
+		if err := HolderAllowed(asset, *req.ToHolder); err != nil {
 			return err
 		}
 		fromKey := fmt.Sprintf("%s:%s", req.Holder.Type, req.Holder.ID)
@@ -354,7 +492,13 @@ func (s *Bookkeeping) transfer(ctx context.Context, req domain.CommandRequest) (
 		} else {
 			fromAcc, toAcc = accSecond, accFirst
 		}
-		if fromAcc.Available < req.Amount && !asset.OverdraftAllowed {
+		if err := AccountUsable(fromAcc); err != nil {
+			return err
+		}
+		if err := AccountUsable(toAcc); err != nil {
+			return err
+		}
+		if fromAcc.Available < req.Amount && !asset.OverdraftAllowed && !systemOverdraft(fromAcc) {
 			return domain.ErrInsufficient
 		}
 		fromAcc.Available -= req.Amount
@@ -396,8 +540,24 @@ func (s *Bookkeeping) transfer(ctx context.Context, req domain.CommandRequest) (
 }
 
 func (s *Bookkeeping) getOrOpenLocked(ctx context.Context, tenantID string, holder domain.Holder, assetCode string) (*domain.Account, error) {
+	asset, err := s.assets.Get(ctx, tenantID, assetCode)
+	if err != nil {
+		if domain.Is(err, domain.CodeNotFound) {
+			return nil, domain.ErrInvalidParam
+		}
+		return nil, err
+	}
+	if asset.Status != domain.AssetActive {
+		return nil, domain.NewError(domain.CodeInvalidParam, "资产未启用")
+	}
+	if err := HolderAllowed(asset, holder); err != nil {
+		return nil, err
+	}
 	acc, err := s.accs.GetForUpdate(ctx, tenantID, holder, assetCode)
 	if err == nil {
+		if err := AccountUsable(acc); err != nil {
+			return nil, err
+		}
 		return acc, nil
 	}
 	if !domain.Is(err, domain.CodeNotFound) {
@@ -416,6 +576,26 @@ func (s *Bookkeeping) getOrOpenLocked(ctx context.Context, tenantID string, hold
 		return nil, err
 	}
 	return s.accs.GetForUpdate(ctx, tenantID, holder, assetCode)
+}
+
+func (s *Bookkeeping) postSystem(ctx context.Context, req domain.CommandRequest, systemID, assetCode string, dir domain.Direction, amount int64, journalID string) (string, error) {
+	acc, err := s.getOrOpenLocked(ctx, req.TenantID, domain.Holder{Type: domain.HolderSystemSubject, ID: systemID}, assetCode)
+	if err != nil {
+		return "", err
+	}
+	if dir == domain.DirOUT {
+		acc.Available -= amount
+	} else {
+		acc.Available += amount
+	}
+	if err := s.accs.UpdateBalances(ctx, acc); err != nil {
+		return "", err
+	}
+	e, err := s.writeEntry(ctx, req, acc, dir, amount, "", journalID)
+	if err != nil {
+		return "", err
+	}
+	return e.EntryID, nil
 }
 
 func (s *Bookkeeping) writeEntry(ctx context.Context, req domain.CommandRequest, acc *domain.Account, dir domain.Direction, amount int64, freezeID, journalID string) (*domain.LedgerEntry, error) {
@@ -492,6 +672,12 @@ func validateBase(req domain.CommandRequest) error {
 	if req.BizNo == "" || req.SourceSystem == "" || req.TenantID == "" {
 		return domain.ErrInvalidParam
 	}
+	if req.Command == domain.CmdReverse {
+		if req.RelatedBizNo == "" {
+			return domain.NewError(domain.CodeInvalidParam, "Reverse 需要 related_biz_no")
+		}
+		return nil
+	}
 	if req.Command != domain.CmdCapture && req.Command != domain.CmdRelease {
 		if req.Holder.ID == "" || req.AssetCode == "" {
 			return domain.ErrInvalidParam
@@ -505,10 +691,10 @@ func requestHash(req domain.CommandRequest) string {
 	if req.Fx != nil {
 		rate = req.Fx.RateID + "|" + req.Fx.Rate
 	}
-	payload := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%d|%s|%s|%d|%s|%d|%s|%d",
+	payload := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%d|%s|%s|%d|%s|%d|%s|%d|%s",
 		req.Command, req.TenantID, req.SourceSystem, req.BizNo,
 		req.Holder.Type, req.Holder.ID, req.AssetCode, req.Amount,
-		req.FreezeID, req.ToAssetCode, req.ToAmount, req.FeeAsset, req.FeeAmount, rate, req.Tolerance)
+		req.FreezeID, req.ToAssetCode, req.ToAmount, req.FeeAsset, req.FeeAmount, rate, req.Tolerance, req.RelatedBizNo)
 	sum := sha256.Sum256([]byte(payload))
 	return hex.EncodeToString(sum[:])
 }

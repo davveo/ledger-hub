@@ -12,6 +12,7 @@ const (
 	CmdRelease  Command = "Release"
 	CmdTransfer Command = "Transfer"
 	CmdExchange Command = "Exchange"
+	CmdReverse  Command = "Reverse"
 )
 
 type Direction string
@@ -220,10 +221,13 @@ const (
 	JournalTransfer = "transfer"
 	JournalExchange = "exchange"
 	JournalReverse  = "reverse"
+	JournalPosting  = "posting"
 
-	SystemFxFee      = "fx_fee_income"
-	SystemFxClearing = "fx_clearing"
-	SystemPointSink  = "point_sink"
+	SystemFxFee              = "fx_fee_income"
+	SystemFxClearing         = "fx_clearing"
+	SystemPointSink          = "point_sink"
+	SystemPointIssuance      = "point_issuance"
+	SystemPendingSettlement  = "pending_settlement"
 )
 
 type ACLRule struct {
@@ -240,6 +244,7 @@ const (
 	DiffBalanceTieOut  = "balance_tie_out"
 	DiffFreezeTieOut   = "freeze_tie_out"
 	DiffFxIncomplete   = "fx_incomplete"
+	DiffChannelMismatch = "channel_mismatch"
 
 	ReconJobRunning  = "running"
 	ReconJobDone     = "done"
@@ -278,6 +283,7 @@ type ReconcileSummary struct {
 	BalanceTieOut   int    `json:"balance_tie_out"`
 	FreezeTieOut    int    `json:"freeze_tie_out"`
 	FxIncomplete    int    `json:"fx_incomplete"`
+	ChannelMismatch int    `json:"channel_mismatch"`
 	InAmount        string `json:"in_amount"`
 	OutAmount       string `json:"out_amount"`
 }

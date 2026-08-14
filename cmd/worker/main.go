@@ -47,9 +47,15 @@ func main() {
 	books := application.NewBookkeeping(tx, repos.Asset, repos.Account, repos.Entry, repos.Freeze, repos.Idempotency, acl).
 		UsePhase3(repos.Journal, repos.FxRate, repos.ExchangeLeg, limiter, cluster.SameShard)
 	recon := application.NewReconcileService(repos.Entry, repos.Account, repos.Freeze, repos.Reconcile).
-		UsePhase3(repos.ExchangeLeg, repos.Journal)
+		UsePhase3(repos.ExchangeLeg, repos.Journal).
+		UseFx(repos.FxRate).
+		WithOutput(cfg.App.ReconcileDir)
 	expire := application.NewExpireEngine(repos.Asset, repos.Account, repos.Entry, books)
-	run := worker.New(cfg.Worker, zapLog, books, recon, repos.Freeze, cfg.App.DefaultTenant).WithExpire(expire)
+	fxSvc := application.NewFxService(repos.FxRate)
+	run := worker.New(cfg.Worker, zapLog, books, recon, repos.Freeze, cfg.App.DefaultTenant).
+		WithExpire(expire).
+		WithTenants(repos.Tenant).
+		WithFxFeed(fxSvc)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -202,12 +202,13 @@ curl -s 'http://127.0.0.1:8080/api/v1/ledger/accounts?holder_type=user&holder_id
 | `Release` | 释放预占 frozen↓ available↑ | `POST /api/v1/ledger/commands/release` | Phase 2（已实现内核） |
 | `Transfer` | 同币种转账 | `POST /api/v1/ledger/commands/transfer` | Phase 2（已实现内核） |
 | `Exchange` | 跨币种兑换（同一 Journal） | `POST /api/v1/ledger/commands/exchange` | Phase 3 |
+| `Reverse` | 按原 Journal 整笔冲正（`related_biz_no`） | `POST /api/v1/ledger/commands/reverse` | P0 |
 
 聚合入口：`POST /api/v1/ledger/commands`，body 带 `"command":"Credit"`。
 
 余额恒等式：`total = available + frozen`。
 
-**Transfer 禁止跨币种**；跨币种必须用 `Exchange`，以便保留汇率、双边金额并对账。跨 `holder_id` 分片的 Transfer 会返回 `42204`，需经系统科目轧差。
+**Transfer 禁止跨币种**；跨币种必须用 `Exchange`，以便保留汇率、双边金额并对账。跨 `holder_id` 分片的 Transfer 经 `system_subject:pending_settlement` 两段记账；第二腿失败会冲正第一腿。
 
 兑换金额均为最小单位整数；`rate` 表示 `to_display ≈ from_display * rate`。账本校验 `|expected_to - to_amount| <= tolerance`，超出滑点返回 `42203`。`to.amount` 可省略，由账本按汇率计算。
 
@@ -378,15 +379,17 @@ Gateway 写请求头：
 campaign  → Credit POINT
 order     → Freeze / Capture / Release  POINT、BALANCE_CNY
 pay       → Credit BALANCE_CNY
-wallet    → Credit / Debit / Freeze / Capture / Release / Transfer / Exchange
-worker    → Release / Debit / Transfer *
+wallet    → Credit / Debit / Freeze / Capture / Release / Transfer / Exchange / Reverse
+worker    → Release / Debit / Transfer / Reverse *
 ```
 
 运营台：浏览器打开 `http://127.0.0.1:8080/console`。
 
-分库：`mysql.shards` 配置额外 DSN；账户 / 流水 / 冻结 / 幂等按 `holder_id` 哈希路由。未配置时仍为单库。同 holder 的 Exchange 落在同一分片；跨 holder Transfer 若分片不同则拒绝（`42204`）。
+分库：`mysql.shards` 配置额外 DSN；账户 / 流水 / 冻结 / 幂等按 `holder_id` 哈希路由。未配置时仍为单库。同 holder 的 Exchange 落在同一分片；跨 holder Transfer 若分片不同则经 `pending_settlement` 两段记账。
 
-积分过期：在资产 `ext` 中配置，例如 `{"expire":{"policy":"year_end"}}` 或 `{"expire":{"policy":"rolling_days","days":365}}`。Worker 按 `asset_expire_interval` 扫描并以 `Debit`（`biz_type=expire`）扣减。
+积分过期：在资产 `ext` 中配置，例如 `{"expire":{"policy":"year_end"}}` 或 `{"expire":{"policy":"rolling_days","days":365}}`。Worker 按 `asset_expire_interval` 扫描并以 `Transfer` 转入 `system_subject:point_sink`（`biz_type=expire`）。
+
+对账 CSV 写入 `app.reconcile_dir`（默认 `data/reconcile`），可通过 `GET /api/v1/ledger/reconcile/files/:name` 下载。L5 渠道对账传 `channel_lines`。汇率 Feed 见 `worker.fx_feed`。
 
 ---
 

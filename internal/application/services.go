@@ -50,10 +50,17 @@ func (s *AccountService) Open(ctx context.Context, tenantID string, holder domai
 	if tenantID == "" || holder.ID == "" || assetCode == "" {
 		return nil, domain.ErrInvalidParam
 	}
-	if _, err := s.assets.Get(ctx, tenantID, assetCode); err != nil {
+	asset, err := s.assets.Get(ctx, tenantID, assetCode)
+	if err != nil {
 		if domain.Is(err, domain.CodeNotFound) {
 			return nil, domain.ErrInvalidParam
 		}
+		return nil, err
+	}
+	if asset.Status != domain.AssetActive {
+		return nil, domain.NewError(domain.CodeInvalidParam, "资产未启用")
+	}
+	if err := HolderAllowed(asset, holder); err != nil {
 		return nil, err
 	}
 	acc, err := s.accs.Get(ctx, tenantID, holder, assetCode)

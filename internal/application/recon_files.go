@@ -1,0 +1,52 @@
+package application
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/davveo/ledger-hub/internal/domain"
+)
+
+func (s *ReconcileService) writeReconcileFiles(date, sys, asset string, files map[string]string) (map[string]string, error) {
+	if s == nil || s.outDir == "" {
+		return nil, nil
+	}
+	if err := os.MkdirAll(s.outDir, 0o755); err != nil {
+		return nil, err
+	}
+	names := map[string]string{
+		"recon":           "recon_" + sys + "_" + asset + "_" + date + ".csv",
+		"diff":            "diff_" + sys + "_" + asset + "_" + date + ".csv",
+		"balance_tie_out": "balance_tie_out_" + sys + "_" + asset + "_" + date + ".csv",
+		"fx_journal":      "fx_journal_" + sys + "_" + asset + "_" + date + ".csv",
+	}
+	paths := map[string]string{}
+	for key, name := range names {
+		body, ok := files[key]
+		if !ok {
+			continue
+		}
+		p := filepath.Join(s.outDir, name)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			return paths, err
+		}
+		paths[key] = p
+	}
+	return paths, nil
+}
+
+func (s *ReconcileService) FilePath(name string) (string, error) {
+	if s == nil || s.outDir == "" {
+		return "", domain.ErrNotFound
+	}
+	base := filepath.Base(name)
+	if base != name || strings.Contains(base, "..") || base == "." || base == "/" {
+		return "", domain.ErrInvalidParam
+	}
+	p := filepath.Join(s.outDir, base)
+	if _, err := os.Stat(p); err != nil {
+		return "", domain.ErrNotFound
+	}
+	return p, nil
+}

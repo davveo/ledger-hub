@@ -13,12 +13,14 @@ import (
 )
 
 type ReconcileService struct {
-	entries domain.EntryRepository
-	accs    domain.AccountRepository
-	freezes domain.FreezeRepository
-	store   domain.ReconcileRepository
-	legs    domain.ExchangeLegRepository
+	entries  domain.EntryRepository
+	accs     domain.AccountRepository
+	freezes  domain.FreezeRepository
+	store    domain.ReconcileRepository
+	legs     domain.ExchangeLegRepository
 	journals domain.JournalRepository
+	fx       domain.FxRateRepository
+	outDir   string
 }
 
 func NewReconcileService(entries domain.EntryRepository, accs domain.AccountRepository, freezes domain.FreezeRepository, store domain.ReconcileRepository) *ReconcileService {
@@ -31,6 +33,16 @@ func (s *ReconcileService) UsePhase3(legs domain.ExchangeLegRepository, journals
 	return s
 }
 
+func (s *ReconcileService) UseFx(fx domain.FxRateRepository) *ReconcileService {
+	s.fx = fx
+	return s
+}
+
+func (s *ReconcileService) WithOutput(dir string) *ReconcileService {
+	s.outDir = dir
+	return s
+}
+
 type ReconcileReport struct {
 	Job           *domain.ReconcileJob    `json:"job"`
 	LedgerEntries []*domain.LedgerEntry   `json:"ledger_entries"`
@@ -38,7 +50,7 @@ type ReconcileReport struct {
 	Files         map[string]string       `json:"files"`
 }
 
-func (s *ReconcileService) Trigger(ctx context.Context, tenantID, date, sourceSystem, assetCode string, bizLines []domain.BizLine) (*ReconcileReport, error) {
+func (s *ReconcileService) Trigger(ctx context.Context, tenantID, date, sourceSystem, assetCode string, bizLines, channelLines []domain.BizLine) (*ReconcileReport, error) {
 	if tenantID == "" || date == "" {
 		return nil, domain.ErrInvalidParam
 	}
@@ -104,11 +116,14 @@ func (s *ReconcileService) Trigger(ctx context.Context, tenantID, date, sourceSy
 	}
 	diffs = append(diffs, l3...)
 
-	l4 := s.fxTieOut(entries)
+	l4 := s.fxTieOut(ctx, tenantID, entries)
 	for i := range l4 {
 		l4[i].JobID = job.JobID
 	}
 	diffs = append(diffs, l4...)
+
+	l5 := MatchChannelLines(job.JobID, channelLines, entries)
+	diffs = append(diffs, l5...)
 
 	sum := summarize(len(entries), len(bizLines), diffs, inAmt, outAmt)
 	job.Status = domain.ReconJobDone
@@ -128,14 +143,22 @@ func (s *ReconcileService) Trigger(ctx context.Context, tenantID, date, sourceSy
 	if asset == "" {
 		asset = "all"
 	}
+	files := map[string]string{
+		"recon":           reconCSV(sys, asset, date, entries),
+		"diff":            diffCSV(sys, asset, date, diffs),
+		"balance_tie_out": kindCSV("balance_tie_out_"+sys+"_"+asset+"_"+date+".csv", domain.DiffBalanceTieOut, diffs),
+		"fx_journal":      fxJournalCSV(sys, asset, date, entries),
+	}
+	if paths, err := s.writeReconcileFiles(date, sys, asset, files); err == nil {
+		for k, p := range paths {
+			files[k+"_path"] = p
+		}
+	}
 	return &ReconcileReport{
 		Job:           job,
 		LedgerEntries: entries,
 		Diffs:         diffs,
-		Files: map[string]string{
-			"recon": reconCSV(sys, asset, date, entries),
-			"diff":  diffCSV(sys, asset, date, diffs),
-		},
+		Files:         files,
 	}, nil
 }
 
@@ -219,6 +242,33 @@ func MatchBizLines(jobID string, biz []domain.BizLine, entries []*domain.LedgerE
 	return diffs
 }
 
+func MatchChannelLines(jobID string, channel []domain.BizLine, entries []*domain.LedgerEntry) []*domain.ReconcileDiff {
+	if len(channel) == 0 {
+		return nil
+	}
+	type key struct{ bizNo, asset string }
+	credits := map[key]int64{}
+	for _, e := range entries {
+		if e.Command != domain.CmdCredit || e.HolderType == domain.HolderSystemSubject || e.Direction != domain.DirIN {
+			continue
+		}
+		k := key{e.BizNo, e.AssetCode}
+		credits[k] += e.Amount
+	}
+	var diffs []*domain.ReconcileDiff
+	for _, line := range channel {
+		asset := line.AssetCode
+		if asset == "" {
+			asset = "BALANCE_CNY"
+		}
+		ledgerAmt := credits[key{line.BizNo, asset}]
+		if ledgerAmt != line.Amount {
+			diffs = append(diffs, newDiff(jobID, domain.DiffChannelMismatch, line.BizNo, domain.CmdCredit, asset, line.Amount, ledgerAmt, "支付渠道金额与 Credit 不一致"))
+		}
+	}
+	return diffs
+}
+
 func (s *ReconcileService) balanceTieOut(ctx context.Context, tenantID, assetCode string, dayEntries []*domain.LedgerEntry) ([]*domain.ReconcileDiff, error) {
 	seen := map[string]struct{}{}
 	var diffs []*domain.ReconcileDiff
@@ -286,7 +336,7 @@ func (s *ReconcileService) freezeTieOut(ctx context.Context, tenantID, assetCode
 	return diffs, nil
 }
 
-func (s *ReconcileService) fxTieOut(entries []*domain.LedgerEntry) []*domain.ReconcileDiff {
+func (s *ReconcileService) fxTieOut(ctx context.Context, tenantID string, entries []*domain.LedgerEntry) []*domain.ReconcileDiff {
 	type gkey struct{ journal, biz string }
 	groups := map[gkey][]*domain.LedgerEntry{}
 	for _, e := range entries {
@@ -302,22 +352,52 @@ func (s *ReconcileService) fxTieOut(entries []*domain.LedgerEntry) []*domain.Rec
 			diffs = append(diffs, newDiff("", domain.DiffFxIncomplete, k.biz, domain.CmdExchange, "", 0, 0, "缺少 journal_id"))
 			continue
 		}
-		var userOut, userIn bool
+		var userOut, userIn, feeAmt int64
+		var fromAsset, toAsset, feeAsset string
 		assets := map[string]struct{}{}
 		for _, e := range es {
 			assets[e.AssetCode] = struct{}{}
 			if e.HolderType == domain.HolderSystemSubject {
+				if e.HolderID == domain.SystemFxFee && e.Direction == domain.DirIN {
+					feeAmt += e.Amount
+					feeAsset = e.AssetCode
+				}
 				continue
 			}
 			if e.Direction == domain.DirOUT {
-				userOut = true
+				userOut += e.Amount
+				fromAsset = e.AssetCode
 			}
 			if e.Direction == domain.DirIN {
-				userIn = true
+				userIn += e.Amount
+				toAsset = e.AssetCode
 			}
 		}
-		if !userOut || !userIn || len(assets) < 2 {
-			diffs = append(diffs, newDiff("", domain.DiffFxIncomplete, k.biz, domain.CmdExchange, "", 0, 0, "兑换分录不完整"))
+		if userOut == 0 || userIn == 0 || len(assets) < 2 {
+			diffs = append(diffs, newDiff("", domain.DiffFxIncomplete, k.biz, domain.CmdExchange, "", userOut, userIn, "兑换分录不完整"))
+			continue
+		}
+		if s.legs == nil {
+			continue
+		}
+		leg, err := s.legs.GetByBizNo(ctx, tenantID, k.biz)
+		if err != nil || leg == nil {
+			diffs = append(diffs, newDiff("", domain.DiffFxIncomplete, k.biz, domain.CmdExchange, fromAsset, 0, userOut, "缺少 exchange_leg"))
+			continue
+		}
+		if userOut != leg.FromAmount || fromAsset != leg.FromAsset {
+			diffs = append(diffs, newDiff("", domain.DiffAmountMismatch, k.biz, domain.CmdExchange, leg.FromAsset, leg.FromAmount, userOut, "from 腿金额/币种与凭证不符"))
+		}
+		if userIn != leg.ToAmount || toAsset != leg.ToAsset {
+			diffs = append(diffs, newDiff("", domain.DiffAmountMismatch, k.biz, domain.CmdExchange, leg.ToAsset, leg.ToAmount, userIn, "to 腿金额/币种与凭证不符"))
+		}
+		if leg.FeeAmount > 0 && (feeAmt != leg.FeeAmount || (leg.FeeAsset != "" && feeAsset != leg.FeeAsset)) {
+			diffs = append(diffs, newDiff("", domain.DiffAmountMismatch, k.biz, domain.CmdExchange, leg.FeeAsset, leg.FeeAmount, feeAmt, "fee 与凭证不符"))
+		}
+		if leg.RateID != "" && s.fx != nil {
+			if _, err := s.fx.Get(ctx, leg.RateID); err != nil {
+				diffs = append(diffs, newDiff("", domain.DiffFxIncomplete, k.biz, domain.CmdExchange, "", 0, 0, "缺少 fx_rate "+leg.RateID))
+			}
 		}
 	}
 	return diffs
@@ -326,11 +406,12 @@ func (s *ReconcileService) fxTieOut(entries []*domain.LedgerEntry) []*domain.Rec
 func reconstruct(entries []*domain.LedgerEntry) (available, frozen int64) {
 	for _, e := range entries {
 		switch e.Command {
-		case domain.CmdCredit:
-			available += e.Amount
-		case domain.CmdDebit:
-			available -= e.Amount
 		case domain.CmdFreeze:
+			if e.BizType == "unfreeze" {
+				available += e.Amount
+				frozen -= e.Amount
+				continue
+			}
 			available -= e.Amount
 			frozen += e.Amount
 		case domain.CmdCapture:
@@ -338,7 +419,18 @@ func reconstruct(entries []*domain.LedgerEntry) (available, frozen int64) {
 		case domain.CmdRelease:
 			frozen -= e.Amount
 			available += e.Amount
-		case domain.CmdTransfer, domain.CmdExchange:
+		case domain.CmdReverse:
+			if e.BizType == "unfreeze" {
+				available += e.Amount
+				frozen -= e.Amount
+				continue
+			}
+			if e.Direction == domain.DirIN {
+				available += e.Amount
+			} else {
+				available -= e.Amount
+			}
+		default:
 			if e.Direction == domain.DirIN {
 				available += e.Amount
 			} else {
@@ -372,6 +464,8 @@ func summarize(ledgerN, bizN int, diffs []*domain.ReconcileDiff, inAmt, outAmt i
 			sum.FreezeTieOut++
 		case domain.DiffFxIncomplete:
 			sum.FxIncomplete++
+		case domain.DiffChannelMismatch:
+			sum.ChannelMismatch++
 		}
 	}
 	matched := bizN - sum.Missing - sum.AmountMismatch - sum.AssetMismatch
@@ -416,6 +510,36 @@ func diffCSV(sys, asset, date string, diffs []*domain.ReconcileDiff) string {
 	_ = w.Write([]string{"kind", "biz_no", "command", "asset_code", "biz_amount", "ledger_amount", "account_id", "status", "note"})
 	for _, d := range diffs {
 		_ = w.Write([]string{d.Kind, d.BizNo, string(d.Command), d.AssetCode, strconv.FormatInt(d.BizAmount, 10), strconv.FormatInt(d.LedgerAmount, 10), d.AccountID, d.Status, d.Note})
+	}
+	w.Flush()
+	return buf.String()
+}
+
+func kindCSV(filename, kind string, diffs []*domain.ReconcileDiff) string {
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	_ = w.Write([]string{"file", filename})
+	_ = w.Write([]string{"kind", "biz_no", "command", "asset_code", "biz_amount", "ledger_amount", "account_id", "status", "note"})
+	for _, d := range diffs {
+		if d.Kind != kind {
+			continue
+		}
+		_ = w.Write([]string{d.Kind, d.BizNo, string(d.Command), d.AssetCode, strconv.FormatInt(d.BizAmount, 10), strconv.FormatInt(d.LedgerAmount, 10), d.AccountID, d.Status, d.Note})
+	}
+	w.Flush()
+	return buf.String()
+}
+
+func fxJournalCSV(sys, asset, date string, entries []*domain.LedgerEntry) string {
+	var buf bytes.Buffer
+	w := csv.NewWriter(&buf)
+	_ = w.Write([]string{"file", "fx_journal_" + sys + "_" + asset + "_" + date + ".csv"})
+	_ = w.Write([]string{"biz_no", "journal_id", "asset_code", "holder_type", "holder_id", "direction", "amount", "entry_id"})
+	for _, e := range entries {
+		if e.Command != domain.CmdExchange {
+			continue
+		}
+		_ = w.Write([]string{e.BizNo, e.JournalID, e.AssetCode, string(e.HolderType), e.HolderID, string(e.Direction), strconv.FormatInt(e.Amount, 10), e.EntryID})
 	}
 	w.Flush()
 	return buf.String()

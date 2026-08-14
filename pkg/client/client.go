@@ -56,6 +56,10 @@ func (c *Client) Exchange(ctx context.Context, body map[string]interface{}) (jso
 	return c.post(ctx, "/api/v1/ledger/commands/exchange", body)
 }
 
+func (c *Client) Reverse(ctx context.Context, body map[string]interface{}) (json.RawMessage, error) {
+	return c.post(ctx, "/api/v1/ledger/commands/reverse", body)
+}
+
 func (c *Client) post(ctx context.Context, path string, body map[string]interface{}) (json.RawMessage, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {

@@ -33,5 +33,5 @@ vendor/
 *.log
 logs/
 
-# Local config overrides
-configs/config.local.yaml
+# Local runtime artifacts
+data/

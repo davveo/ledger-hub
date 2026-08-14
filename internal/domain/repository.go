@@ -38,6 +38,7 @@ type FreezeRepository interface {
 	GetByID(ctx context.Context, freezeID string) (*FreezeOrder, error)
 	GetByBizNo(ctx context.Context, tenantID, bizNo string) (*FreezeOrder, error)
 	UpdateStatus(ctx context.Context, freezeID string, from, to FreezeStatus) error
+	Update(ctx context.Context, f *FreezeOrder) error
 	ListExpired(ctx context.Context, now time.Time, limit int) ([]*FreezeOrder, error)
 	ListFrozen(ctx context.Context, tenantID, assetCode string) ([]*FreezeOrder, error)
 }

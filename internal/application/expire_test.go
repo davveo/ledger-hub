@@ -37,4 +37,11 @@ func TestExpireYearEnd(t *testing.T) {
 	if acc.Available != 0 {
 		t.Fatalf("available=%d", acc.Available)
 	}
+	sink, err := memAccount{st}.Get(ctx, "t_default", domain.Holder{Type: domain.HolderSystemSubject, ID: domain.SystemPointSink}, "POINT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sink.Available != 80 {
+		t.Fatalf("sink=%d", sink.Available)
+	}
 }

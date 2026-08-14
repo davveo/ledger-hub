@@ -2,6 +2,7 @@ app:
   name: ledger-hub
   env: local
   default_tenant: t_default
+  reconcile_dir: data/reconcile
 
 http:
   api_addr: ":8080"
@@ -47,10 +48,10 @@ acl:
       commands: ["Credit"]
       assets: ["BALANCE_CNY"]
     - source_system: wallet
-      commands: ["Credit", "Debit", "Freeze", "Capture", "Release", "Transfer", "Exchange"]
+      commands: ["Credit", "Debit", "Freeze", "Capture", "Release", "Transfer", "Exchange", "Reverse"]
       assets: ["POINT", "BALANCE_CNY", "BALANCE_USD"]
     - source_system: worker
-      commands: ["Release", "Debit", "Transfer"]
+      commands: ["Release", "Debit", "Transfer", "Reverse"]
       assets: ["*"]
 
 connector:
@@ -61,6 +62,11 @@ worker:
   freeze_expire_interval: 30s
   reconcile_interval: 1h
   asset_expire_interval: 24h
+  fx_feed_interval: 1h
+  fx_feed:
+    - base_asset: BALANCE_CNY
+      quote_asset: BALANCE_USD
+      rate: "0.14000000"
 
 limits:
   rules:

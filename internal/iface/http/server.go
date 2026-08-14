@@ -60,6 +60,7 @@ func (s *Server) Engine() *gin.Engine {
 		g.POST("/commands/release", s.wrap(domain.CmdRelease))
 		g.POST("/commands/transfer", s.wrap(domain.CmdTransfer))
 		g.POST("/commands/exchange", s.wrap(domain.CmdExchange))
+		g.POST("/commands/reverse", s.wrap(domain.CmdReverse))
 
 		g.GET("/entries", s.listEntries)
 		g.GET("/journals/:id", s.getJournal)
@@ -77,6 +78,7 @@ func (s *Server) Engine() *gin.Engine {
 		g.POST("/reconcile/jobs", s.triggerReconcile)
 		g.GET("/reconcile/jobs/:id", s.getReconcileJob)
 		g.GET("/reconcile/reports/:date", s.getReconcileReport)
+		g.GET("/reconcile/files/:name", s.getReconcileFile)
 		g.POST("/reconcile/diffs/:id/resolve", s.resolveDiff)
 
 		g.GET("/console/overview", s.consoleOverview)
@@ -440,6 +442,12 @@ func (s *Server) triggerReconcile(c *gin.Context) {
 			AssetCode string `json:"asset_code"`
 			Amount    string `json:"amount"`
 		} `json:"biz_lines"`
+		ChannelLines []struct {
+			BizNo     string `json:"biz_no"`
+			Command   string `json:"command"`
+			AssetCode string `json:"asset_code"`
+			Amount    string `json:"amount"`
+		} `json:"channel_lines"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		fail(c, domain.NewError(domain.CodeInvalidParam, err.Error()))
@@ -459,7 +467,21 @@ func (s *Server) triggerReconcile(c *gin.Context) {
 			Amount:    amt,
 		})
 	}
-	rep, err := s.recon.Trigger(c.Request.Context(), s.tenantID(c, ""), body.Date, body.SourceSystem, body.AssetCode, lines)
+	channels := make([]domain.BizLine, 0, len(body.ChannelLines))
+	for _, l := range body.ChannelLines {
+		amt, err := parseAmount(l.Amount)
+		if err != nil {
+			fail(c, domain.ErrInvalidParam)
+			return
+		}
+		channels = append(channels, domain.BizLine{
+			BizNo:     l.BizNo,
+			Command:   domain.Command(l.Command),
+			AssetCode: l.AssetCode,
+			Amount:    amt,
+		})
+	}
+	rep, err := s.recon.Trigger(c.Request.Context(), s.tenantID(c, ""), body.Date, body.SourceSystem, body.AssetCode, lines, channels)
 	if err != nil {
 		fail(c, err)
 		return
@@ -483,6 +505,15 @@ func (s *Server) getReconcileReport(c *gin.Context) {
 		return
 	}
 	ok(c, rep)
+}
+
+func (s *Server) getReconcileFile(c *gin.Context) {
+	p, err := s.recon.FilePath(c.Param("name"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.FileAttachment(p, c.Param("name"))
 }
 
 func (s *Server) resolveDiff(c *gin.Context) {

@@ -24,6 +24,7 @@ type AppConfig struct {
 	Name          string `mapstructure:"name"`
 	Env           string `mapstructure:"env"`
 	DefaultTenant string `mapstructure:"default_tenant"`
+	ReconcileDir  string `mapstructure:"reconcile_dir"`
 }
 
 type HTTPConfig struct {
@@ -75,9 +76,18 @@ type ConnectorConfig struct {
 }
 
 type WorkerConfig struct {
-	FreezeExpireInterval time.Duration `mapstructure:"freeze_expire_interval"`
-	ReconcileInterval    time.Duration `mapstructure:"reconcile_interval"`
-	AssetExpireInterval  time.Duration `mapstructure:"asset_expire_interval"`
+	FreezeExpireInterval time.Duration  `mapstructure:"freeze_expire_interval"`
+	ReconcileInterval    time.Duration  `mapstructure:"reconcile_interval"`
+	AssetExpireInterval  time.Duration  `mapstructure:"asset_expire_interval"`
+	FxFeedInterval       time.Duration  `mapstructure:"fx_feed_interval"`
+	FxFeed               []FxFeedPair   `mapstructure:"fx_feed"`
+}
+
+type FxFeedPair struct {
+	TenantID   string `mapstructure:"tenant_id"`
+	BaseAsset  string `mapstructure:"base_asset"`
+	QuoteAsset string `mapstructure:"quote_asset"`
+	Rate       string `mapstructure:"rate"`
 }
 
 type LimitConfig struct {
@@ -116,6 +126,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.App.DefaultTenant == "" {
 		cfg.App.DefaultTenant = "t_default"
+	}
+	if cfg.App.ReconcileDir == "" {
+		cfg.App.ReconcileDir = "data/reconcile"
 	}
 	if cfg.Connector.Addr == "" {
 		cfg.Connector.Addr = ":8090"
