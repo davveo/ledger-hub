@@ -107,14 +107,37 @@ ledger-hub/
 
 ### 4.1 环境
 
-- Go 1.20+
-- Docker（用于本地 MySQL 8）
+- Docker Compose（一键启动全部进程）
+- 或本地：Go 1.20+
 
-### 4.2 启动依赖与服务
+### 4.2 一键启动
 
 ```bash
-make docker-up          # MySQL 8，库名 ledger_hub，root/root
-make tidy
+make docker-up          # MySQL + API + Gateway + Worker + Connector
+```
+
+等价于：
+
+```bash
+docker compose -f deployments/docker-compose.yaml up -d --build
+```
+
+会拉起：
+
+| 容器 | 端口 | 说明 |
+|------|------|------|
+| `ledger-hub-mysql` | `3306` | MySQL 8，库名 `ledger_hub`，root/root |
+| `ledger-hub-api` | `8080` | 账本内核 / 运营台 `/console` |
+| `ledger-hub-gateway` | `8088` | HMAC 网关 |
+| `ledger-hub-worker` | `8089` | 超时释放 / 过期 / 日终对账 |
+| `ledger-hub-connector` | `8090` | 订单/支付样板接入 |
+
+停止：`make docker-down`。
+
+仅本机跑 Go 进程时，先起数据库再分别启动：
+
+```bash
+docker compose -f deployments/docker-compose.yaml up -d mysql
 make api                # 另开终端：make gateway / make worker / make connector
 ```
 

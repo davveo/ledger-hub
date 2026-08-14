@@ -1,0 +1,9 @@
+.git
+.gitignore
+.cursor
+bin
+docs
+*.md
+通用账本中台技术方案.md
+**/*_test.go
+**/testdata

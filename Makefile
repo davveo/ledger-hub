@@ -26,7 +26,7 @@ connector:
 	go run ./cmd/connector -config configs/config.yaml
 
 docker-up:
-	docker compose -f deployments/docker-compose.yaml up -d
+	docker compose -f deployments/docker-compose.yaml up -d --build
 
 docker-down:
 	docker compose -f deployments/docker-compose.yaml down
