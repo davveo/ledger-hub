@@ -1,0 +1,39 @@
+app:
+  name: ledger-hub
+  env: local
+  default_tenant: t_default
+
+http:
+  api_addr: ":8080"
+  gateway_addr: ":8088"
+  worker_addr: ":8089"
+  read_timeout: 10s
+  write_timeout: 15s
+  shutdown_timeout: 10s
+
+mysql:
+  dsn: "root:root@tcp(127.0.0.1:3306)/ledger_hub?charset=utf8mb4&parseTime=True&loc=Local"
+  max_idle_conns: 10
+  max_open_conns: 50
+  conn_max_lifetime: 30m
+
+log:
+  level: debug
+  encoding: console
+
+gateway:
+  upstream: "http://127.0.0.1:8080"
+  rate_limit_rps: 200
+  clients:
+    - client_id: order
+      secret: "dev-secret-order"
+    - client_id: pay
+      secret: "dev-secret-pay"
+    - client_id: campaign
+      secret: "dev-secret-campaign"
+    - client_id: wallet
+      secret: "dev-secret-wallet"
+
+worker:
+  freeze_expire_interval: 30s
+  reconcile_interval: 1h

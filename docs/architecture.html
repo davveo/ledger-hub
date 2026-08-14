@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ledger Hub Architecture Diagram</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot {
+      width: 12px; height: 12px; background: #22d3ee; border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; }
+    .diagram-container {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 1rem;
+      border: 1px solid #1e293b;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+    svg { width: 100%; min-width: 900px; display: block; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+    .card {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 0.75rem;
+      border: 1px solid #1e293b;
+      padding: 1.25rem;
+    }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card-dot.amber { background: #fbbf24; }
+    .card-dot.rose { background: #fb7185; }
+    .card h3 { font-size: 0.875rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.75rem; }
+    .card li { margin-bottom: 0.375rem; }
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.75rem; }
+    .toolbar { display: flex; gap: 0.5rem; margin-left: auto; flex-shrink: 0; align-items: center; }
+    .toolbar-toggle {
+      background: transparent; border: none; color: #475569; cursor: pointer;
+      font-size: 1.25rem; line-height: 1; padding: 0.25rem 0.5rem; border-radius: 0.375rem;
+      transition: color 0.2s, background 0.2s;
+    }
+    .toolbar-toggle:hover { color: #94a3b8; background: rgba(30, 41, 59, 0.5); }
+    .toolbar-actions { display: none; gap: 0.5rem; }
+    .toolbar.expanded .toolbar-actions { display: flex; }
+    .toolbar-actions button {
+      background: rgba(30, 41, 59, 0.8); border: 1px solid #334155; color: #94a3b8;
+      padding: 0.375rem 0.75rem; border-radius: 0.375rem; font-family: inherit;
+      font-size: 0.75rem; cursor: pointer; transition: all 0.2s; white-space: nowrap;
+    }
+    .toolbar-actions button:hover { background: rgba(51, 65, 85, 0.8); color: white; border-color: #475569; }
+    @media print { body { background: #020617; padding: 1rem; } .toolbar { display: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="container" id="report-container">
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>Ledger Hub Architecture</h1>
+        <div class="toolbar">
+          <div class="toolbar-actions">
+            <button onclick="copyAsImage(this)">📋 Copy</button>
+            <button onclick="downloadPNG(this)">🖼️ PNG</button>
+            <button onclick="downloadPDF(this)">📄 PDF</button>
+          </div>
+          <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export options" aria-label="Export options">⋯</button>
+        </div>
+      </div>
+      <p class="subtitle">通用账本中台 · Go + Gin + GORM · 分层可独立部署 · 草案 v0.2</p>
+    </div>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1200 1040">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <marker id="arrow-cyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <marker id="arrow-rose" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185" />
+          </marker>
+          <marker id="arrow-emerald" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#34d399" />
+          </marker>
+          <marker id="arrow-violet" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#a78bfa" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- arrows first (behind boxes) -->
+        <line x1="180" y1="86" x2="180" y2="124" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <line x1="450" y1="86" x2="450" y2="124" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <line x1="720" y1="86" x2="720" y2="124" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <line x1="990" y1="86" x2="990" y2="124" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <line x1="600" y1="176" x2="600" y2="214" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrow-cyan)"/>
+        <text x="620" y="200" fill="#22d3ee" font-size="8">标准记账命令</text>
+
+        <line x1="600" y1="272" x2="600" y2="310" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arrow-rose)"/>
+        <text x="620" y="296" fill="#fb7185" font-size="8">HMAC / mTLS</text>
+
+        <line x1="280" y1="592" x2="280" y2="630" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arrow-violet)"/>
+        <line x1="580" y1="592" x2="580" y2="630" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arrow-violet)"/>
+        <line x1="1055" y1="500" x2="1055" y2="630" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrow-emerald)"/>
+
+        <line x1="290" y1="853" x2="358" y2="853" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrow-cyan)"/>
+        <line x1="642" y1="853" x2="908" y2="853" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrow-emerald)"/>
+
+        <!-- ===== Row: business systems y=30 h=56 ===== -->
+        <rect x="70" y="30" width="220" height="56" rx="6" fill="#0f172a"/>
+        <rect x="70" y="30" width="220" height="56" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="180" y="52" fill="white" font-size="11" font-weight="600" text-anchor="middle">订单 / 交易系统</text>
+        <text x="180" y="68" fill="#94a3b8" font-size="9" text-anchor="middle">source=order</text>
+
+        <rect x="340" y="30" width="220" height="56" rx="6" fill="#0f172a"/>
+        <rect x="340" y="30" width="220" height="56" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="450" y="52" fill="white" font-size="11" font-weight="600" text-anchor="middle">支付 / 充值</text>
+        <text x="450" y="68" fill="#94a3b8" font-size="9" text-anchor="middle">source=pay</text>
+
+        <rect x="610" y="30" width="220" height="56" rx="6" fill="#0f172a"/>
+        <rect x="610" y="30" width="220" height="56" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="720" y="52" fill="white" font-size="11" font-weight="600" text-anchor="middle">活动 / 营销</text>
+        <text x="720" y="68" fill="#94a3b8" font-size="9" text-anchor="middle">source=campaign</text>
+
+        <rect x="880" y="30" width="220" height="56" rx="6" fill="#0f172a"/>
+        <rect x="880" y="30" width="220" height="56" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="990" y="52" fill="white" font-size="11" font-weight="600" text-anchor="middle">钱包 / 游戏 / 其他</text>
+        <text x="990" y="68" fill="#94a3b8" font-size="9" text-anchor="middle">source=wallet</text>
+
+        <!-- Adapter y=126 h=50  (86+40) -->
+        <rect x="70" y="126" width="1030" height="50" rx="6" fill="#0f172a"/>
+        <rect x="70" y="126" width="1030" height="50" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="585" y="147" fill="white" font-size="12" font-weight="600" text-anchor="middle">Adapter / Connector</text>
+        <text x="585" y="163" fill="#94a3b8" font-size="9" text-anchor="middle">业务事件 → Credit / Debit / Freeze / Capture / Release / Transfer / Exchange · 可独立部署</text>
+
+        <!-- Gateway y=216 h=56 (176+40) -->
+        <rect x="70" y="216" width="1030" height="56" rx="6" fill="#0f172a"/>
+        <rect x="70" y="216" width="1030" height="56" rx="6" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="585" y="239" fill="white" font-size="12" font-weight="600" text-anchor="middle">API Gateway  ·  cmd/gateway  ·  :8088</text>
+        <text x="585" y="255" fill="#fda4af" font-size="9" text-anchor="middle">鉴权 HMAC / 限流 / 审计 / 签名校验 · 独立进程</text>
+
+        <!-- Ledger Hub region y=312 h=280 -->
+        <rect x="50" y="312" width="880" height="280" rx="12" fill="rgba(251, 191, 36, 0.05)" stroke="#fbbf24" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="66" y="332" fill="#fbbf24" font-size="10" font-weight="600">Ledger Hub API  ·  cmd/api  ·  :8080</text>
+
+        <!-- row1 y=348 h=70 -->
+        <rect x="80" y="348" width="190" height="70" rx="6" fill="#0f172a"/>
+        <rect x="80" y="348" width="190" height="70" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="175" y="372" fill="white" font-size="11" font-weight="600" text-anchor="middle">Asset Mgmt</text>
+        <text x="175" y="388" fill="#94a3b8" font-size="9" text-anchor="middle">资产注册 / 精度</text>
+        <text x="175" y="402" fill="#34d399" font-size="8" text-anchor="middle">可拆服务</text>
+
+        <rect x="290" y="348" width="190" height="70" rx="6" fill="#0f172a"/>
+        <rect x="290" y="348" width="190" height="70" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="385" y="372" fill="white" font-size="11" font-weight="600" text-anchor="middle">Account</text>
+        <text x="385" y="388" fill="#94a3b8" font-size="9" text-anchor="middle">开户 / 查询 / 懒开户</text>
+        <text x="385" y="402" fill="#34d399" font-size="8" text-anchor="middle">可拆服务</text>
+
+        <rect x="500" y="348" width="190" height="70" rx="6" fill="#0f172a"/>
+        <rect x="500" y="348" width="190" height="70" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="595" y="372" fill="white" font-size="11" font-weight="600" text-anchor="middle">Bookkeeping</text>
+        <text x="595" y="388" fill="#94a3b8" font-size="9" text-anchor="middle">记账引擎 + 行锁</text>
+        <text x="595" y="402" fill="#34d399" font-size="8" text-anchor="middle">可拆服务</text>
+
+        <rect x="710" y="348" width="190" height="70" rx="6" fill="#0f172a"/>
+        <rect x="710" y="348" width="190" height="70" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="805" y="372" fill="white" font-size="11" font-weight="600" text-anchor="middle">Freeze Engine</text>
+        <text x="805" y="388" fill="#94a3b8" font-size="9" text-anchor="middle">冻结 / 确认 / 释放</text>
+        <text x="805" y="402" fill="#34d399" font-size="8" text-anchor="middle">可拆服务</text>
+
+        <!-- row2 y=458 h=70 (418+40) -->
+        <rect x="80" y="458" width="190" height="70" rx="6" fill="#0f172a"/>
+        <rect x="80" y="458" width="190" height="70" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="175" y="482" fill="white" font-size="11" font-weight="600" text-anchor="middle">Idempotency</text>
+        <text x="175" y="498" fill="#94a3b8" font-size="9" text-anchor="middle">biz_no 幂等回放</text>
+        <text x="175" y="512" fill="#34d399" font-size="8" text-anchor="middle">可拆服务</text>
+
+        <rect x="290" y="458" width="190" height="70" rx="6" fill="#0f172a"/>
+        <rect x="290" y="458" width="190" height="70" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="385" y="482" fill="white" font-size="11" font-weight="600" text-anchor="middle">Reconcile</text>
+        <text x="385" y="498" fill="#94a3b8" font-size="9" text-anchor="middle">日终对账 / 差异</text>
+        <text x="385" y="512" fill="#34d399" font-size="8" text-anchor="middle">Phase 2</text>
+
+        <rect x="500" y="458" width="190" height="70" rx="6" fill="#0f172a"/>
+        <rect x="500" y="458" width="190" height="70" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="595" y="482" fill="white" font-size="11" font-weight="600" text-anchor="middle">Limit / Risk</text>
+        <text x="595" y="498" fill="#94a3b8" font-size="9" text-anchor="middle">限额风控（可插）</text>
+        <text x="595" y="512" fill="#34d399" font-size="8" text-anchor="middle">Phase 3</text>
+
+        <rect x="710" y="458" width="190" height="70" rx="6" fill="#0f172a"/>
+        <rect x="710" y="458" width="190" height="70" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="805" y="482" fill="white" font-size="11" font-weight="600" text-anchor="middle">FX / Journal</text>
+        <text x="805" y="498" fill="#94a3b8" font-size="9" text-anchor="middle">兑换凭证 / 汇率快照</text>
+        <text x="805" y="512" fill="#34d399" font-size="8" text-anchor="middle">Phase 3</text>
+
+        <!-- Worker independent -->
+        <rect x="960" y="430" width="190" height="70" rx="6" fill="#0f172a"/>
+        <rect x="960" y="430" width="190" height="70" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="1055" y="454" fill="white" font-size="11" font-weight="600" text-anchor="middle">ledger-worker</text>
+        <text x="1055" y="470" fill="#94a3b8" font-size="9" text-anchor="middle">超时释放 / 对账任务</text>
+        <text x="1055" y="484" fill="#34d399" font-size="8" text-anchor="middle">cmd/worker :8089</text>
+
+        <!-- Data y=632 h=70 (592+40) -->
+        <rect x="180" y="632" width="200" height="70" rx="6" fill="#0f172a"/>
+        <rect x="180" y="632" width="200" height="70" rx="6" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="280" y="656" fill="white" font-size="11" font-weight="600" text-anchor="middle">MySQL 8</text>
+        <text x="280" y="672" fill="#94a3b8" font-size="9" text-anchor="middle">Ledger Store · 强一致</text>
+        <text x="280" y="686" fill="#a78bfa" font-size="8" text-anchor="middle">account / entry / freeze</text>
+
+        <rect x="480" y="632" width="200" height="70" rx="6" fill="#0f172a"/>
+        <rect x="480" y="632" width="200" height="70" rx="6" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="580" y="656" fill="white" font-size="11" font-weight="600" text-anchor="middle">Redis Cache</text>
+        <text x="580" y="672" fill="#94a3b8" font-size="9" text-anchor="middle">余额只读缓存（可选）</text>
+        <text x="580" y="686" fill="#a78bfa" font-size="8" text-anchor="middle">写入后删缓存 · 非账本</text>
+
+        <rect x="780" y="632" width="200" height="70" rx="6" fill="#0f172a"/>
+        <rect x="780" y="632" width="200" height="70" rx="6" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="880" y="656" fill="white" font-size="11" font-weight="600" text-anchor="middle">Audit Log</text>
+        <text x="880" y="672" fill="#94a3b8" font-size="9" text-anchor="middle">谁 / 何时 / 何 biz_no</text>
+        <text x="880" y="686" fill="#fb7185" font-size="8" text-anchor="middle">命令审计</text>
+
+        <!-- Part 2: layered deploy region y=742 h=200  (702+40) -->
+        <rect x="50" y="742" width="1100" height="200" rx="12" fill="rgba(6, 78, 59, 0.08)" stroke="#34d399" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="66" y="762" fill="#34d399" font-size="10" font-weight="600">进程内分层（包边界清晰，可再拆 gRPC 服务）</text>
+
+        <rect x="70" y="818" width="220" height="70" rx="6" fill="#0f172a"/>
+        <rect x="70" y="818" width="220" height="70" rx="6" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="180" y="844" fill="white" font-size="11" font-weight="600" text-anchor="middle">Gateway 进程</text>
+        <text x="180" y="862" fill="#94a3b8" font-size="9" text-anchor="middle">internal/gateway</text>
+
+        <rect x="360" y="788" width="280" height="130" rx="8" fill="#0f172a"/>
+        <rect x="360" y="788" width="280" height="130" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="500" y="808" fill="white" font-size="11" font-weight="600" text-anchor="middle">API 进程分层</text>
+        <text x="500" y="826" fill="#6ee7b7" font-size="8" text-anchor="middle">iface/http  ·  Gin 路由</text>
+        <text x="500" y="844" fill="#6ee7b7" font-size="8" text-anchor="middle">application  ·  用例编排</text>
+        <text x="500" y="862" fill="#6ee7b7" font-size="8" text-anchor="middle">domain  ·  记账内核 / 仓储接口</text>
+        <text x="500" y="880" fill="#6ee7b7" font-size="8" text-anchor="middle">infrastructure  ·  GORM / MySQL</text>
+        <text x="500" y="900" fill="#34d399" font-size="7" text-anchor="middle">依赖单向向下 · 领域零框架</text>
+
+        <rect x="910" y="818" width="210" height="70" rx="6" fill="#0f172a"/>
+        <rect x="910" y="818" width="210" height="70" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="1015" y="844" fill="white" font-size="11" font-weight="600" text-anchor="middle">Worker 进程</text>
+        <text x="1015" y="862" fill="#94a3b8" font-size="9" text-anchor="middle">复用 domain + application</text>
+
+        <!-- Legend below all regions: region ends 942, legend 962 -->
+        <text x="50" y="972" fill="white" font-size="10" font-weight="600">Legend</text>
+        <rect x="50" y="982" width="16" height="10" rx="2" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1"/>
+        <text x="72" y="991" fill="#94a3b8" font-size="8">业务系统</text>
+        <rect x="160" y="982" width="16" height="10" rx="2" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="182" y="991" fill="#94a3b8" font-size="8">Adapter</text>
+        <rect x="260" y="982" width="16" height="10" rx="2" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1"/>
+        <text x="282" y="991" fill="#94a3b8" font-size="8">Gateway / 安全</text>
+        <rect x="410" y="982" width="16" height="10" rx="2" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1"/>
+        <text x="432" y="991" fill="#94a3b8" font-size="8">Backend 进程</text>
+        <rect x="540" y="982" width="16" height="10" rx="2" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1"/>
+        <text x="562" y="991" fill="#94a3b8" font-size="8">Database</text>
+        <line x1="650" y1="987" x2="670" y2="987" stroke="#fb7185" stroke-width="1" stroke-dasharray="3,3"/>
+        <text x="676" y="991" fill="#94a3b8" font-size="8">鉴权流量</text>
+        <rect x="760" y="982" width="16" height="10" rx="2" fill="transparent" stroke="#fbbf24" stroke-width="1" stroke-dasharray="3,3"/>
+        <text x="782" y="991" fill="#94a3b8" font-size="8">独立部署边界</text>
+      </svg>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>独立部署单元</h3>
+        </div>
+        <ul>
+          <li>• Gateway :8088 — 鉴权 / 限流 / 审计</li>
+          <li>• API :8080 — 记账命令 HTTP 内核</li>
+          <li>• Worker :8089 — 超时释放 / 对账任务</li>
+          <li>• Connector — 业务 MQ → 标准命令（可选）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>记账内核</h3>
+        </div>
+        <ul>
+          <li>• Credit / Debit / Freeze / Capture / Release / Transfer</li>
+          <li>• 幂等键 tenant+source+biz_no+command</li>
+          <li>• 账户行锁 + 乐观锁，金额最小单位整数</li>
+          <li>• Exchange / 汇率快照 / Journal 预留 Phase 3</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot violet"></div>
+          <h3>数据与一致性</h3>
+        </div>
+        <ul>
+          <li>• MySQL 主库强一致写入，流水不可丢</li>
+          <li>• Redis 仅只读缓存，写入后删除</li>
+          <li>• 一币种一资产一账户，禁止混币</li>
+          <li>• 对账按 asset_code 分文件，禁止折本币混加</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="footer">
+      Ledger Hub · 通用账本中台 v0.2 · Go + Gin + GORM · 2026-08-14
+    </p>
+  </div>
+
+  <script>
+    async function copyAsImage(btn) {
+      const orig = btn.textContent;
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        btn.textContent = '✓ Copied!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+    async function downloadPNG(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const link = document.createElement('a');
+        link.download = 'ledger-hub-architecture.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+    async function downloadPDF(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = window.jspdf;
+        const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+        const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height], hotfixes: ['px_scaling'] });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+        pdf.save('ledger-hub-architecture.pdf');
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+  </script>
+</body>
+</html>
