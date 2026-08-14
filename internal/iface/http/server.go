@@ -98,8 +98,10 @@ func (s *Server) Engine() *gin.Engine {
 		g.GET("/openapi.yaml", s.openapiSpec)
 
 		g.POST("/reconcile/jobs", s.triggerReconcile)
+		g.GET("/reconcile/jobs", s.listReconcileJobs)
 		g.GET("/reconcile/jobs/:id", s.getReconcileJob)
 		g.GET("/reconcile/reports/:date", s.getReconcileReport)
+		g.GET("/reconcile/files", s.listReconcileFiles)
 		g.GET("/reconcile/files/:name", s.getReconcileFile)
 		g.POST("/reconcile/diffs/:id/resolve", s.resolveDiff)
 
@@ -536,6 +538,32 @@ func (s *Server) triggerReconcile(c *gin.Context) {
 	ok(c, rep)
 }
 
+func (s *Server) listReconcileJobs(c *gin.Context) {
+	if s.recon == nil {
+		fail(c, domain.ErrNotImplemented)
+		return
+	}
+	list, err := s.recon.ListJobs(c.Request.Context(), s.tenantID(c, ""), parsePage(c).Limit)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, list)
+}
+
+func (s *Server) listReconcileFiles(c *gin.Context) {
+	if s.recon == nil {
+		fail(c, domain.ErrNotImplemented)
+		return
+	}
+	list, err := s.recon.ListFiles()
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, list)
+}
+
 func (s *Server) getReconcileJob(c *gin.Context) {
 	rep, err := s.recon.GetJob(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -740,6 +768,10 @@ func (s *Server) consoleOverview(c *gin.Context) {
 	tenant := s.tenantID(c, "")
 	assets, _ := s.assets.List(ctx, tenant)
 	accs, _ := s.accounts.List(ctx, tenant, c.Query("asset_code"))
+	accViews := make([]gin.H, 0, len(accs))
+	for _, acc := range accs {
+		accViews = append(accViews, accountView(acc))
+	}
 	var rates []*domain.FxRate
 	if s.fx != nil {
 		rates, _ = s.fx.List(ctx, tenant)
@@ -764,7 +796,7 @@ func (s *Server) consoleOverview(c *gin.Context) {
 		"tenant_id": tenant,
 		"tenants":   tenants,
 		"assets":    assets,
-		"accounts":  accs,
+		"accounts":  accViews,
 		"fx_rates":  rates,
 		"limits":    limits,
 		"acl":       aclRules,

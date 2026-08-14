@@ -1,9 +1,13 @@
-# syntax=docker/dockerfile:1
+# 默认走 DaoCloud 镜像，避免直连 Docker Hub 超时。海外可覆盖：
+#   docker compose build --build-arg GO_IMAGE=golang:1.20-alpine --build-arg RUNTIME_IMAGE=alpine:3.20
+ARG GO_IMAGE=docker.m.daocloud.io/library/golang:1.20-alpine
+ARG RUNTIME_IMAGE=docker.m.daocloud.io/library/alpine:3.20
 
-FROM golang:1.20-alpine AS builder
+FROM ${GO_IMAGE} AS builder
 WORKDIR /src
-RUN apk add --no-cache git ca-certificates
-ENV CGO_ENABLED=0 GOOS=linux
+RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.aliyun.com/alpine#g' /etc/apk/repositories \
+ && apk add --no-cache git ca-certificates
+ENV CGO_ENABLED=0 GOOS=linux GOPROXY=https://goproxy.cn,direct GOSUMDB=sum.golang.google.cn
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
@@ -12,8 +16,9 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api \
  && go build -trimpath -ldflags="-s -w" -o /out/worker ./cmd/worker \
  && go build -trimpath -ldflags="-s -w" -o /out/connector ./cmd/connector
 
-FROM alpine:3.20 AS runtime
-RUN apk add --no-cache ca-certificates tzdata wget \
+FROM ${RUNTIME_IMAGE} AS runtime
+RUN sed -i 's#https\?://dl-cdn.alpinelinux.org/alpine#https://mirrors.aliyun.com/alpine#g' /etc/apk/repositories \
+ && apk add --no-cache ca-certificates tzdata wget \
  && adduser -D -H -u 65532 app
 WORKDIR /app
 COPY --from=builder --chown=app:app /src/configs /app/configs

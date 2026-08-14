@@ -3,182 +3,655 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Ledger Hub 运营台</title>
+  <title>Ledger Hub 后台</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet"/>
   <style>
-    :root { color-scheme: dark; }
-    body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #0f1419; color: #e7ecf3; }
-    header { padding: 20px 28px; border-bottom: 1px solid #243044; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-    h1 { margin: 0; font-size: 20px; }
-    main { padding: 20px 28px 48px; display: grid; gap: 18px; }
-    section { background: #161d27; border: 1px solid #243044; border-radius: 12px; padding: 16px 18px; }
-    h2 { margin: 0 0 12px; font-size: 15px; color: #9fb3c8; }
+    :root {
+      --bg: #020617; --panel: #0f172a; --panel-2: #111827; --line: #1e293b;
+      --text: #e2e8f0; --muted: #94a3b8; --cyan: #22d3ee; --emerald: #34d399;
+      --amber: #fbbf24; --rose: #fb7185; --violet: #a78bfa; --btn: #1f6feb;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+      font-family: "Noto Sans SC", ui-sans-serif, system-ui, sans-serif; }
+    button, input, select, textarea { font: inherit; }
+    a { color: var(--cyan); }
+    code, .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+    .app { display: grid; grid-template-columns: 220px 1fr; min-height: 100%; }
+    .side { background: var(--panel); border-right: 1px solid var(--line); padding: 20px 12px; position: sticky; top: 0; height: 100vh; }
+    .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px 18px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
+    .brand h1 { margin: 0; font-size: 15px; letter-spacing: .02em; }
+    .brand p { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
+    nav a { display: block; color: var(--muted); text-decoration: none; padding: 9px 12px; border-radius: 8px; margin: 2px 0; font-size: 13px; }
+    nav a:hover, nav a.active { background: #1e293b; color: var(--text); }
+    .main { display: flex; flex-direction: column; min-width: 0; }
+    header.top { display: flex; gap: 10px; align-items: center; padding: 14px 22px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+    header.top h2 { margin: 0; font-size: 16px; flex: 1; }
+    .content { padding: 20px 22px 56px; display: grid; gap: 16px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+    .card h3 { margin: 0 0 12px; font-size: 14px; color: var(--muted); font-weight: 600; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+    .row:last-child { margin-bottom: 0; }
+    input, select, textarea { background: #020617; color: inherit; border: 1px solid #334155; border-radius: 8px; padding: 8px 10px; min-width: 140px; }
+    textarea { width: 100%; min-height: 72px; }
+    button { background: var(--btn); color: #fff; border: 0; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
+    button.ghost { background: transparent; border: 1px solid #334155; color: var(--text); }
+    button.warn { background: #9f1239; }
+    button.ok { background: #065f46; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .muted { color: var(--muted); font-size: 12px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+    .stat { background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+    .stat .k { color: var(--muted); font-size: 12px; }
+    .stat .v { font-size: 22px; margin-top: 6px; font-family: "JetBrains Mono", monospace; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #243044; }
-    input, button, select { background: #0f1419; color: inherit; border: 1px solid #3a4a60; border-radius: 8px; padding: 8px 10px; }
-    button { cursor: pointer; background: #1f6feb; border-color: #1f6feb; }
-    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-    .muted { color: #8b9bb0; font-size: 12px; }
-    pre { white-space: pre-wrap; font-size: 12px; }
+    th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+    th { color: var(--muted); font-weight: 500; font-size: 12px; }
+    td.mono { font-size: 12px; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; }
+    .b-active, .b-done, .b-resolved, .b-captured { background: rgba(52,211,153,.15); color: var(--emerald); }
+    .b-disabled, .b-failed, .b-open, .b-missing { background: rgba(251,113,133,.15); color: var(--rose); }
+    .b-frozen, .b-running { background: rgba(251,191,36,.15); color: var(--amber); }
+    .b-released { background: rgba(148,163,184,.15); color: var(--muted); }
+    .toast { position: fixed; right: 18px; bottom: 18px; background: #1e293b; border: 1px solid #334155; padding: 10px 14px; border-radius: 10px; max-width: 420px; display: none; font-size: 13px; z-index: 9; }
+    .toast.show { display: block; }
+    .toast.err { border-color: var(--rose); }
+    .login { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+    .login .card { width: min(420px, 100%); }
+    .hidden { display: none !important; }
+    .pager { display: flex; gap: 8px; align-items: center; }
+    @media (max-width: 860px) { .app { grid-template-columns: 1fr; } .side { position: static; height: auto; } }
   </style>
 </head>
 <body>
-<header>
-  <h1>Ledger Hub 运营台</h1>
-  <span class="muted">资产 / 租户 / 账户 / 流水 / 对账 / 限额</span>
-</header>
-<main>
-  <section>
-    <h2>鉴权</h2>
-    <div class="row">
-      <input id="token" placeholder="X-Console-Token" style="min-width:240px"/>
-      <button onclick="saveToken()">保存 Token</button>
+<div id="login" class="login hidden">
+  <div class="card">
+    <div class="brand" style="border:0;padding:0 0 12px;margin:0">
+      <span class="dot"></span>
+      <div><h1>Ledger Hub 后台</h1><p>运营控制台</p></div>
     </div>
-    <p class="muted">经网关访问时填写 configs 中的 gateway.console_token</p>
-  </section>
-  <section>
-    <h2>资产</h2>
-    <div class="row">
-      <input id="assetCode" placeholder="asset_code"/>
-      <input id="assetName" placeholder="name"/>
-      <input id="assetClass" placeholder="asset_class 如 fiat"/>
-      <button onclick="saveAsset()">登记</button>
-      <button onclick="assetStatus('disable')">下线</button>
-      <button onclick="assetStatus('enable')">启用</button>
+    <p class="muted">经网关访问时填写 <code>gateway.console_token</code>（本地默认 <code>dev-console-token</code>）。直连 API :8080 可不填。</p>
+    <div class="row" style="margin-top:12px">
+      <input id="loginToken" placeholder="X-Console-Token" style="flex:1;min-width:0"/>
+      <button onclick="unlock()">进入</button>
     </div>
-    <div id="assets"></div>
-  </section>
-  <section>
-    <h2>租户</h2>
-    <div class="row">
-      <input id="tenantId" placeholder="tenant_id"/>
-      <input id="tenantName" placeholder="name"/>
-      <button onclick="saveTenant()">保存</button>
-      <button onclick="tenantStatus('disable')">停用</button>
-      <button onclick="tenantStatus('enable')">启用</button>
+  </div>
+</div>
+<div id="app" class="app hidden">
+  <aside class="side">
+    <div class="brand">
+      <span class="dot"></span>
+      <div><h1>Ledger Hub</h1><p>运营后台</p></div>
     </div>
-    <div id="tenants"></div>
+    <nav>
+      <a href="#/dashboard" data-page="dashboard">概览</a>
+      <a href="#/assets" data-page="assets">资产</a>
+      <a href="#/tenants" data-page="tenants">租户</a>
+      <a href="#/accounts" data-page="accounts">账户</a>
+      <a href="#/entries" data-page="entries">流水</a>
+      <a href="#/freezes" data-page="freezes">冻结单</a>
+      <a href="#/fx" data-page="fx">汇率</a>
+      <a href="#/reconcile" data-page="reconcile">对账</a>
+      <a href="#/risk" data-page="risk">风控</a>
+    </nav>
+  </aside>
+  <section class="main">
+    <header class="top">
+      <h2 id="title">概览</h2>
+      <select id="tenantSel" onchange="onTenant()"></select>
+      <input id="token" placeholder="Console Token" style="min-width:180px"/>
+      <button class="ghost" onclick="saveToken()">保存 Token</button>
+    </header>
+    <div class="content" id="view"></div>
   </section>
-  <section>
-    <h2>账户 / 流水</h2>
-    <div class="row">
-      <input id="holderId" placeholder="holder_id"/>
-      <input id="holderType" placeholder="holder_type" value="user"/>
-      <input id="qAsset" placeholder="asset_code 可空"/>
-      <button onclick="searchAcc()">查账户</button>
-      <button onclick="searchEntries()">查流水</button>
-    </div>
-    <div id="search"></div>
-  </section>
-  <section>
-    <h2>汇率 / 对账</h2>
-    <div class="row">
-      <input id="base" placeholder="base 如 BALANCE_CNY"/>
-      <input id="quote" placeholder="quote 如 BALANCE_USD"/>
-      <input id="rate" placeholder="rate 如 0.14000000"/>
-      <button onclick="saveRate()">保存汇率</button>
-    </div>
-    <div class="row">
-      <input id="reconDate" placeholder="对账日期 YYYY-MM-DD"/>
-      <button onclick="runRecon()">触发日终对账</button>
-      <input id="diffId" placeholder="diff_id"/>
-      <input id="diffNote" placeholder="关闭说明"/>
-      <button onclick="resolveDiff()">关闭差异</button>
-    </div>
-    <pre id="msg" class="muted"></pre>
-  </section>
-  <section>
-    <h2>限额与告警</h2>
-    <pre id="limits" class="muted">加载中…</pre>
-  </section>
-  <section>
-    <h2>账户一览</h2>
-    <div id="accounts"></div>
-  </section>
-</main>
+</div>
+<div id="toast" class="toast"></div>
 <script>
-const tokenKey = 'ledger_console_token';
-document.getElementById('token').value = localStorage.getItem(tokenKey) || '';
-function saveToken() {
-  localStorage.setItem(tokenKey, document.getElementById('token').value);
-  load();
+const TOKEN_KEY = 'ledger_console_token';
+const TENANT_KEY = 'ledger_console_tenant';
+const titles = {dashboard:'概览', assets:'资产', tenants:'租户', accounts:'账户', entries:'流水', freezes:'冻结单', fx:'汇率', reconcile:'对账', risk:'风控'};
+let overview = {};
+let entryOffset = 0;
+const entryLimit = 50;
+
+function $(id) { return document.getElementById(id); }
+function page() { return (location.hash.replace(/^#\/?/, '') || 'dashboard').split('?')[0]; }
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function v(row, ...keys) {
+  if (!row) return '';
+  for (const k of keys) {
+    if (row[k] != null && row[k] !== '') return row[k];
+    const found = Object.keys(row).find(x => x.toLowerCase() === k.toLowerCase().replace(/_/g, ''));
+    if (found && row[found] != null && row[found] !== '') return row[found];
+  }
+  return '';
+}
+function badge(st) {
+  const s = String(st || '').toLowerCase();
+  return `<span class="badge b-${esc(s)}">${esc(st || '-')}</span>`;
+}
+function toast(msg, err) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.className = 'toast show' + (err ? ' err' : '');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.remove('show'), 3200);
 }
 function headers(json) {
   const h = {};
   if (json) h['Content-Type'] = 'application/json';
-  const t = localStorage.getItem(tokenKey);
+  const t = localStorage.getItem(TOKEN_KEY);
   if (t) h['X-Console-Token'] = t;
+  const tenant = localStorage.getItem(TENANT_KEY);
+  if (tenant) h['X-Tenant-Id'] = tenant;
   return h;
 }
 async function api(path, opt) {
-  const r = await fetch(path, opt);
-  return r.json();
+  const r = await fetch(path, Object.assign({headers: headers(opt && opt.body)}, opt || {}));
+  if (r.status === 401) {
+    showLogin();
+    throw new Error('未授权');
+  }
+  const ct = r.headers.get('content-type') || '';
+  if (!ct.includes('json')) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r;
+  }
+  const j = await r.json();
+  if (j.code && j.code !== 0) throw new Error(j.message || ('错误 ' + j.code));
+  return j;
 }
-async function load() {
-  const j = await api('/api/v1/ledger/console/overview', {headers: headers()});
-  const d = j.data || {};
-  document.getElementById('limits').textContent = JSON.stringify({limits: d.limits, acl: d.acl, alerts: d.alerts}, null, 2);
-  document.getElementById('accounts').innerHTML = table(['account_id','holder_id','asset_code','available','frozen','status'], d.accounts || []);
-  document.getElementById('assets').innerHTML = table(['AssetCode','Name','Status','AssetClass'], d.assets || []);
-  document.getElementById('tenants').innerHTML = table(['TenantID','Name','Status'], d.tenants || []);
+function table(cols, rows, render) {
+  if (!rows || !rows.length) return '<p class="muted">暂无数据</p>';
+  const head = cols.map(c => `<th>${esc(c.label)}</th>`).join('');
+  const body = rows.map(row => {
+    const tds = cols.map(c => {
+      const raw = c.value ? c.value(row) : v(row, c.key);
+      return `<td class="${c.mono ? 'mono' : ''}">${c.html ? raw : esc(raw)}</td>`;
+    }).join('');
+    return `<tr>${tds}${render ? `<td>${render(row)}</td>` : ''}</tr>`;
+  }).join('');
+  return `<div style="overflow:auto"><table><thead><tr>${head}${render ? '<th></th>' : ''}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
-function table(cols, rows) {
-  if (!rows.length) return '<p class="muted">暂无数据</p>';
-  const head = cols.map(c => '<th>'+c+'</th>').join('');
-  const body = rows.map(row => '<tr>'+cols.map(c => {
-    const k = Object.keys(row).find(x => x.toLowerCase() === c.toLowerCase()) || c;
-    return '<td>'+ (row[k] ?? row[c] ?? '') +'</td>';
-  }).join('')+'</tr>').join('');
-  return '<table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table>';
+
+function showLogin() {
+  $('login').classList.remove('hidden');
+  $('app').classList.add('hidden');
+  $('loginToken').value = localStorage.getItem(TOKEN_KEY) || 'dev-console-token';
 }
+function unlock() {
+  localStorage.setItem(TOKEN_KEY, $('loginToken').value.trim());
+  boot();
+}
+function saveToken() {
+  localStorage.setItem(TOKEN_KEY, $('token').value.trim());
+  toast('Token 已保存');
+  loadOverview().then(render);
+}
+function onTenant() {
+  localStorage.setItem(TENANT_KEY, $('tenantSel').value);
+  loadOverview().then(render);
+}
+
+async function loadOverview() {
+  const j = await api('/api/v1/ledger/console/overview');
+  overview = j.data || {};
+  fillTenants(overview.tenants || []);
+  return overview;
+}
+function fillTenants(list) {
+  const sel = $('tenantSel');
+  const cur = localStorage.getItem(TENANT_KEY) || overview.tenant_id || '';
+  if (!list.length && cur) list = [{tenant_id: cur, name: cur, status: 'active'}];
+  sel.innerHTML = list.map(t => {
+    const id = v(t, 'tenant_id');
+    return `<option value="${esc(id)}" ${id === cur ? 'selected' : ''}>${esc(v(t, 'name') || id)}</option>`;
+  }).join('');
+  if (sel.value && sel.value !== localStorage.getItem(TENANT_KEY)) localStorage.setItem(TENANT_KEY, sel.value);
+}
+
+function render() {
+  const p = page();
+  document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.page === p));
+  $('title').textContent = titles[p] || '概览';
+  const fn = ({dashboard: viewDash, assets: viewAssets, tenants: viewTenants, accounts: viewAccounts,
+    entries: viewEntries, freezes: viewFreezes, fx: viewFx, reconcile: viewRecon, risk: viewRisk})[p] || viewDash;
+  $('view').innerHTML = fn();
+  const run = (f) => f().catch(e => toast(e.message || String(e), true));
+  if (p === 'entries') run(() => searchEntries(false));
+  if (p === 'accounts') run(() => searchAccounts());
+  if (p === 'freezes') run(() => searchFreezes());
+  if (p === 'reconcile') run(() => refreshRecon());
+}
+
+function viewDash() {
+  const d = overview;
+  const alerts = d.alerts || [];
+  return `
+    <div class="stats">
+      <div class="stat"><div class="k">租户</div><div class="v">${(d.tenants||[]).length}</div></div>
+      <div class="stat"><div class="k">资产</div><div class="v">${(d.assets||[]).length}</div></div>
+      <div class="stat"><div class="k">账户</div><div class="v">${(d.accounts||[]).length}</div></div>
+      <div class="stat"><div class="k">汇率快照</div><div class="v">${(d.fx_rates||[]).length}</div></div>
+      <div class="stat"><div class="k">限额告警</div><div class="v">${alerts.length}</div></div>
+    </div>
+    <div class="card"><h3>最近限额告警</h3>${table(
+      [{label:'时间', key:'at'}, {label:'持有人', key:'holder_id', mono:true}, {label:'资产', key:'asset_code'}, {label:'命令', key:'command'}, {label:'原因', key:'reason'}],
+      alerts.slice(0, 8)
+    )}</div>
+    <div class="card"><h3>资产</h3>${table(
+      [{label:'代码', key:'asset_code', mono:true}, {label:'名称', key:'name'}, {label:'类型', key:'asset_class'}, {label:'状态', html:true, value: r => badge(v(r,'status'))}],
+      (d.assets||[]).slice(0, 8)
+    )}</div>`;
+}
+
+function viewAssets() {
+  return `
+    <div class="card">
+      <h3>登记 / 启停</h3>
+      <div class="row">
+        <input id="assetCode" placeholder="asset_code 如 POINT"/>
+        <input id="assetName" placeholder="名称"/>
+        <input id="assetClass" placeholder="asset_class 如 point / fiat"/>
+        <input id="assetHolders" placeholder="holder_types 逗号分隔" value="user,merchant"/>
+        <label class="muted"><input type="checkbox" id="assetFreeze" checked/> 支持冻结</label>
+        <button onclick="saveAsset()">登记</button>
+        <button class="warn" onclick="assetStatus('disable')">下线</button>
+        <button class="ok" onclick="assetStatus('enable')">启用</button>
+      </div>
+    </div>
+    <div class="card"><h3>资产列表</h3>${table(
+      [{label:'代码', key:'asset_code', mono:true}, {label:'名称', key:'name'}, {label:'类型', key:'asset_class'},
+       {label:'精度', key:'precision'}, {label:'持有人', value: r => (v(r,'holder_types') || []).toString()},
+       {label:'冻结', value: r => v(r,'freeze_supported') ? '是' : '否'},
+       {label:'状态', html:true, value: r => badge(v(r,'status'))}],
+      overview.assets || [],
+      r => `<button class="ghost" onclick="fillAsset('${esc(v(r,'asset_code'))}')">选用</button>`
+    )}</div>`;
+}
+
+function viewTenants() {
+  return `
+    <div class="card">
+      <h3>保存 / 启停</h3>
+      <div class="row">
+        <input id="tenantId" placeholder="tenant_id"/>
+        <input id="tenantName" placeholder="名称"/>
+        <button onclick="saveTenant()">保存</button>
+        <button class="warn" onclick="tenantStatus('disable')">停用</button>
+        <button class="ok" onclick="tenantStatus('enable')">启用</button>
+      </div>
+    </div>
+    <div class="card"><h3>租户列表</h3>${table(
+      [{label:'ID', key:'tenant_id', mono:true}, {label:'名称', key:'name'}, {label:'状态', html:true, value: r => badge(v(r,'status'))}],
+      overview.tenants || [],
+      r => `<button class="ghost" onclick="fillTenant('${esc(v(r,'tenant_id'))}','${esc(v(r,'name'))}')">选用</button>`
+    )}</div>`;
+}
+
+function viewAccounts() {
+  return `
+    <div class="card">
+      <h3>检索 / 开户</h3>
+      <div class="row">
+        <input id="holderId" placeholder="holder_id"/>
+        <select id="holderType"><option>user</option><option>merchant</option><option>system_subject</option></select>
+        <input id="qAsset" placeholder="asset_code 可空"/>
+        <button onclick="searchAccounts()">查询</button>
+        <button class="ghost" onclick="openAccount()">开户</button>
+      </div>
+      <p class="muted">不填 holder 时列出当前租户账户。行内可停用 / 启用，禁止再记账。</p>
+    </div>
+    <div class="card"><h3>账户</h3><div id="accTable"><p class="muted">加载中…</p></div></div>`;
+}
+
+function viewEntries() {
+  return `
+    <div class="card">
+      <h3>检索流水</h3>
+      <div class="row">
+        <input id="eHolder" placeholder="holder_id"/>
+        <select id="eType"><option>user</option><option>merchant</option><option>system_subject</option></select>
+        <input id="eAsset" placeholder="asset_code 可空"/>
+        <input id="eBiz" placeholder="biz_no 优先"/>
+        <button onclick="entryOffset=0;searchEntries()">查询</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>冲正</h3>
+      <p class="muted">新 biz_no + related_biz_no 指向原单，保留原流水。禁止直接改余额。</p>
+      <div class="row">
+        <input id="revBiz" placeholder="原 biz_no"/>
+        <input id="revSrc" placeholder="source_system" value="wallet"/>
+        <input id="revNew" placeholder="新 biz_no 可空自动生成"/>
+        <button class="warn" onclick="doReverse()">冲正</button>
+      </div>
+    </div>
+    <div class="card"><h3>流水</h3><div id="entryTable"></div>
+      <div class="pager muted"><button class="ghost" onclick="pageEntries(-1)">上一页</button>
+      <span id="entryPage"></span>
+      <button class="ghost" onclick="pageEntries(1)">下一页</button></div>
+    </div>
+    <div class="card"><h3>凭证</h3><pre id="journalBox" class="muted mono">点击流水中的 journal 查看</pre></div>`;
+}
+
+function viewFreezes() {
+  return `
+    <div class="card">
+      <h3>按持有人列冻结单</h3>
+      <div class="row">
+        <input id="fHolder" placeholder="holder_id"/>
+        <select id="fType"><option>user</option><option>merchant</option></select>
+        <input id="fAsset" placeholder="asset_code 可空"/>
+        <select id="fStatus"><option value="">全部状态</option><option>frozen</option><option>captured</option><option>released</option></select>
+        <button onclick="searchFreezes()">查询</button>
+      </div>
+    </div>
+    <div class="card"><h3>冻结单</h3><div id="fzTable"></div></div>`;
+}
+
+function viewFx() {
+  return `
+    <div class="card">
+      <h3>登记汇率快照</h3>
+      <div class="row">
+        <input id="base" placeholder="base 如 BALANCE_CNY"/>
+        <input id="quote" placeholder="quote 如 BALANCE_USD"/>
+        <input id="rate" placeholder="rate 如 0.14000000"/>
+        <input id="rateSrc" placeholder="rate_source" value="manual"/>
+        <button onclick="saveRate()">保存</button>
+      </div>
+      <p class="muted">账本只存快照，不负责行情对错。兑换必须引用有效 rate_id。</p>
+    </div>
+    <div class="card"><h3>汇率列表</h3>${table(
+      [{label:'Rate ID', key:'rate_id', mono:true}, {label:'Base', key:'base_asset'}, {label:'Quote', key:'quote_asset'},
+       {label:'Rate', key:'rate', mono:true}, {label:'来源', key:'rate_source'}, {label:'报价时间', key:'quoted_at'}],
+      overview.fx_rates || []
+    )}</div>`;
+}
+
+function viewRecon() {
+  const today = new Date().toISOString().slice(0, 10);
+  return `
+    <div class="card">
+      <h3>触发日终对账</h3>
+      <div class="row">
+        <input id="reconDate" placeholder="YYYY-MM-DD" value="${today}"/>
+        <input id="reconSys" placeholder="source_system 可空"/>
+        <input id="reconAsset" placeholder="asset_code 可空"/>
+        <button onclick="runRecon()">跑对账</button>
+        <button class="ghost" onclick="loadReport()">按日期查看</button>
+      </div>
+      <p class="muted">不传业务清单也会跑 L2 余额勾稽、L3 冻结、L4 兑换完整性。</p>
+    </div>
+    <div class="card"><h3>最近任务</h3><div id="jobTable"></div></div>
+    <div class="card"><h3>差异工单</h3>
+      <div class="row">
+        <input id="diffId" placeholder="diff_id"/>
+        <input id="diffNote" placeholder="关闭说明"/>
+        <button onclick="resolveDiff()">关闭差异</button>
+      </div>
+      <div id="diffTable"></div>
+    </div>
+    <div class="card"><h3>对账文件</h3><div id="fileTable"></div></div>
+    <div class="card"><h3>摘要</h3><pre id="reconSum" class="muted mono">尚未加载</pre></div>`;
+}
+
+function viewRisk() {
+  return `
+    <div class="card">
+      <h3>配置热加载</h3>
+      <div class="row">
+        <button onclick="reloadCfg()">重载 ACL / 限额</button>
+        <span class="muted">改 yaml 后点这里，或等 API 15s 扫描 mtime。</span>
+      </div>
+    </div>
+    <div class="card"><h3>ACL 规则</h3>${table(
+      [{label:'租户', key:'tenant_id'}, {label:'系统', key:'source_system'}, {label:'命令', value: r => (r.commands||[]).join(', ')}, {label:'资产', value: r => (r.assets||[]).join(', ')}],
+      overview.acl || []
+    )}</div>
+    <div class="card"><h3>限额规则</h3>${table(
+      [{label:'租户', key:'tenant_id'}, {label:'系统', key:'source_system'}, {label:'资产', key:'asset_code'}, {label:'命令', key:'command'},
+       {label:'单笔上限', key:'max_amount'}, {label:'日累计', key:'daily_amount'}, {label:'日笔数', key:'daily_count'}],
+      overview.limits || []
+    )}</div>
+    <div class="card"><h3>超限告警</h3>${table(
+      [{label:'时间', key:'at'}, {label:'租户', key:'tenant_id'}, {label:'系统', key:'source_system'}, {label:'持有人', key:'holder_id', mono:true},
+       {label:'资产', key:'asset_code'}, {label:'命令', key:'command'}, {label:'原因', key:'reason'}],
+      overview.alerts || []
+    )}</div>`;
+}
+
+function fillAsset(code) { $('assetCode').value = code; }
+function fillTenant(id, name) { $('tenantId').value = id; $('tenantName').value = name; }
+
 async function saveAsset() {
-  const body = {asset_code: document.getElementById('assetCode').value, name: document.getElementById('assetName').value, asset_class: document.getElementById('assetClass').value};
-  document.getElementById('msg').textContent = JSON.stringify(await api('/api/v1/ledger/assets', {method:'POST', headers: headers(true), body: JSON.stringify(body)}));
-  load();
+  const holders = $('assetHolders').value.split(',').map(s => s.trim()).filter(Boolean);
+  await api('/api/v1/ledger/assets', {method:'POST', body: JSON.stringify({
+    asset_code: $('assetCode').value, name: $('assetName').value, asset_class: $('assetClass').value,
+    holder_types: holders, freeze_supported: $('assetFreeze').checked
+  })});
+  toast('资产已保存');
+  await loadOverview(); render();
 }
 async function assetStatus(op) {
-  const code = document.getElementById('assetCode').value;
-  document.getElementById('msg').textContent = JSON.stringify(await api('/api/v1/ledger/assets/'+code+'/'+op, {method:'POST', headers: headers(true), body: '{}'}));
-  load();
+  const code = $('assetCode').value;
+  await api('/api/v1/ledger/assets/' + encodeURIComponent(code) + '/' + op, {method:'POST', body:'{}'});
+  toast('资产已' + (op === 'disable' ? '下线' : '启用'));
+  await loadOverview(); render();
 }
 async function saveTenant() {
-  const body = {tenant_id: document.getElementById('tenantId').value, name: document.getElementById('tenantName').value, status: 'active'};
-  document.getElementById('msg').textContent = JSON.stringify(await api('/api/v1/ledger/tenants', {method:'POST', headers: headers(true), body: JSON.stringify(body)}));
-  load();
+  await api('/api/v1/ledger/tenants', {method:'POST', body: JSON.stringify({
+    tenant_id: $('tenantId').value, name: $('tenantName').value, status: 'active'
+  })});
+  toast('租户已保存');
+  await loadOverview(); render();
 }
 async function tenantStatus(op) {
-  const id = document.getElementById('tenantId').value;
-  document.getElementById('msg').textContent = JSON.stringify(await api('/api/v1/ledger/tenants/'+id+'/'+op, {method:'POST', headers: headers(true), body: '{}'}));
-  load();
+  await api('/api/v1/ledger/tenants/' + encodeURIComponent($('tenantId').value) + '/' + op, {method:'POST', body:'{}'});
+  toast('租户已更新');
+  await loadOverview(); render();
 }
-async function searchAcc() {
-  const q = new URLSearchParams({holder_id: document.getElementById('holderId').value, holder_type: document.getElementById('holderType').value});
-  const asset = document.getElementById('qAsset').value;
+
+async function searchAccounts() {
+  const q = new URLSearchParams();
+  const holder = $('holderId') && $('holderId').value;
+  if (holder) { q.set('holder_id', holder); q.set('holder_type', $('holderType').value); }
+  const asset = $('qAsset') && $('qAsset').value;
   if (asset) q.set('asset_code', asset);
-  const j = await api('/api/v1/ledger/accounts?'+q.toString(), {headers: headers()});
+  const j = await api('/api/v1/ledger/accounts?' + q.toString());
   const rows = Array.isArray(j.data) ? j.data : (j.data ? [j.data] : []);
-  document.getElementById('search').innerHTML = table(['account_id','holder_id','asset_code','available','frozen','status'], rows);
+  $('accTable').innerHTML = table(
+    [{label:'账户', key:'account_id', mono:true}, {label:'持有人', key:'holder_id', mono:true}, {label:'类型', key:'holder_type'},
+     {label:'资产', key:'asset_code'}, {label:'可用', key:'available', mono:true}, {label:'冻结', key:'frozen', mono:true},
+     {label:'状态', html:true, value: r => badge(v(r,'status'))}],
+    rows,
+    r => {
+      const id = v(r,'account_id');
+      const st = String(v(r,'status'));
+      const op = st === 'disabled' ? 'enable' : 'disable';
+      return `<button class="ghost" onclick="setAcc('${esc(id)}','${op}')">${op === 'disable' ? '停用' : '启用'}</button>
+        <button class="ghost" onclick="gotoEntries('${esc(v(r,'holder_id'))}','${esc(v(r,'holder_type'))}','${esc(v(r,'asset_code'))}')">流水</button>`;
+    }
+  );
 }
-async function searchEntries() {
-  const q = new URLSearchParams({holder_id: document.getElementById('holderId').value, holder_type: document.getElementById('holderType').value, limit: '50'});
-  const asset = document.getElementById('qAsset').value;
-  if (asset) q.set('asset_code', asset);
-  const j = await api('/api/v1/ledger/entries?'+q.toString(), {headers: headers()});
-  document.getElementById('search').innerHTML = table(['EntryID','BizNo','Command','AssetCode','Amount','Direction'], (j.data && j.data.items) || []);
+async function openAccount() {
+  await api('/api/v1/ledger/accounts/open', {method:'POST', body: JSON.stringify({
+    holder: {type: $('holderType').value, id: $('holderId').value}, asset_code: $('qAsset').value
+  })});
+  toast('已开户');
+  searchAccounts();
 }
+async function setAcc(id, op) {
+  await api('/api/v1/ledger/accounts/' + encodeURIComponent(id) + '/' + op, {method:'POST', body:'{}'});
+  toast('账户已更新');
+  searchAccounts();
+}
+function gotoEntries(holder, type, asset) {
+  location.hash = '#/entries';
+  setTimeout(() => {
+    if ($('eHolder')) { $('eHolder').value = holder; $('eType').value = type || 'user'; $('eAsset').value = asset || ''; searchEntries(); }
+  }, 0);
+}
+
+async function searchEntries(keep) {
+  if (!keep) entryOffset = entryOffset || 0;
+  const biz = $('eBiz') && $('eBiz').value;
+  let rows = [];
+  if (biz) {
+    const j = await api('/api/v1/ledger/entries?biz_no=' + encodeURIComponent(biz));
+    rows = j.data || [];
+  } else if ($('eHolder') && $('eHolder').value) {
+    const q = new URLSearchParams({holder_id: $('eHolder').value, holder_type: $('eType').value, limit: String(entryLimit), offset: String(entryOffset)});
+    if ($('eAsset').value) q.set('asset_code', $('eAsset').value);
+    const j = await api('/api/v1/ledger/entries?' + q.toString());
+    rows = (j.data && j.data.items) || [];
+  }
+  if ($('entryPage')) $('entryPage').textContent = 'offset ' + entryOffset;
+  if (!$('entryTable')) return;
+  $('entryTable').innerHTML = table(
+    [{label:'时间', key:'created_at'}, {label:'命令', key:'command'}, {label:'方向', key:'direction'},
+     {label:'资产', key:'asset_code'}, {label:'金额', key:'amount', mono:true}, {label:'biz_no', key:'biz_no', mono:true},
+     {label:'journal', key:'journal_id', mono:true}, {label:'余额后', key:'available_after', mono:true}],
+    rows,
+    r => `<button class="ghost" onclick="showJournal('${esc(v(r,'journal_id'))}')">凭证</button>
+          <button class="ghost" onclick="prepReverse('${esc(v(r,'biz_no'))}','${esc(v(r,'source_system'))}')">冲正</button>`
+  );
+}
+function pageEntries(dir) {
+  entryOffset = Math.max(0, entryOffset + dir * entryLimit);
+  searchEntries(true);
+}
+function prepReverse(biz, src) {
+  $('revBiz').value = biz;
+  if (src) $('revSrc').value = src;
+}
+async function showJournal(id) {
+  if (!id) { $('journalBox').textContent = '无 journal_id'; return; }
+  const j = await api('/api/v1/ledger/journals/' + encodeURIComponent(id));
+  $('journalBox').textContent = JSON.stringify(j.data, null, 2);
+}
+async function doReverse() {
+  const related = $('revBiz').value;
+  const biz = $('revNew').value || ('ops:reverse:' + related + ':' + Date.now());
+  const j = await api('/api/v1/ledger/commands/reverse', {method:'POST', body: JSON.stringify({
+    source_system: $('revSrc').value, biz_no: biz, related_biz_no: related
+  })});
+  toast('冲正已受理 ' + (j.data && j.data.journal_id || ''));
+  searchEntries();
+}
+
+async function searchFreezes() {
+  if (!$('fHolder') || !$('fHolder').value) { if ($('fzTable')) $('fzTable').innerHTML = '<p class="muted">填写 holder_id</p>'; return; }
+  const q = new URLSearchParams({holder_id: $('fHolder').value, holder_type: $('fType').value});
+  if ($('fAsset').value) q.set('asset_code', $('fAsset').value);
+  if ($('fStatus').value) q.set('status', $('fStatus').value);
+  const j = await api('/api/v1/ledger/freezes?' + q.toString());
+  const rows = (j.data && j.data.items) || (Array.isArray(j.data) ? j.data : []);
+  $('fzTable').innerHTML = table(
+    [{label:'Freeze ID', key:'freeze_id', mono:true}, {label:'biz_no', key:'biz_no', mono:true}, {label:'资产', key:'asset_code'},
+     {label:'金额', key:'amount', mono:true}, {label:'状态', html:true, value: r => badge(v(r,'status'))}, {label:'过期', key:'expire_at'}],
+    rows
+  );
+}
+
 async function saveRate() {
-  const body = {base_asset: document.getElementById('base').value, quote_asset: document.getElementById('quote').value, rate: document.getElementById('rate').value, rate_source: 'manual'};
-  document.getElementById('msg').textContent = JSON.stringify(await api('/api/v1/ledger/fx/rates', {method:'POST', headers: headers(true), body: JSON.stringify(body)}));
+  await api('/api/v1/ledger/fx/rates', {method:'POST', body: JSON.stringify({
+    base_asset: $('base').value, quote_asset: $('quote').value, rate: $('rate').value, rate_source: $('rateSrc').value, created_by: 'console'
+  })});
+  toast('汇率已保存');
+  await loadOverview(); render();
+}
+
+async function refreshRecon() {
+  try {
+    const jobs = await api('/api/v1/ledger/reconcile/jobs?limit=20');
+    const list = jobs.data || [];
+    $('jobTable').innerHTML = table(
+      [{label:'Job', key:'job_id', mono:true}, {label:'日期', key:'date'}, {label:'系统', key:'source_system'}, {label:'资产', key:'asset_code'},
+       {label:'状态', html:true, value: r => badge(v(r,'status'))}, {label:'时间', key:'created_at'}],
+      list,
+      r => `<button class="ghost" onclick="openJob('${esc(v(r,'job_id'))}')">查看</button>`
+    );
+  } catch (e) { $('jobTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
+  try {
+    const files = await api('/api/v1/ledger/reconcile/files');
+    const tok = localStorage.getItem(TOKEN_KEY) || '';
+    $('fileTable').innerHTML = table(
+      [{label:'文件', key:'name', mono:true}, {label:'大小', key:'size'}, {label:'修改时间', key:'mod_time'}],
+      files.data || [],
+      r => `<a href="/api/v1/ledger/reconcile/files/${encodeURIComponent(v(r,'name'))}?console_token=${encodeURIComponent(tok)}" target="_blank">下载</a>`
+    );
+  } catch (e) { $('fileTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
 }
 async function runRecon() {
-  const date = document.getElementById('reconDate').value;
-  document.getElementById('msg').textContent = JSON.stringify(await api('/api/v1/ledger/reconcile/jobs', {method:'POST', headers: headers(true), body: JSON.stringify({date})}));
+  const body = {date: $('reconDate').value, source_system: $('reconSys').value, asset_code: $('reconAsset').value};
+  const j = await api('/api/v1/ledger/reconcile/jobs', {method:'POST', body: JSON.stringify(body)});
+  toast('对账完成');
+  showReport(j.data);
+  refreshRecon();
 }
+async function loadReport() {
+  const date = $('reconDate').value;
+  const q = new URLSearchParams();
+  if ($('reconSys').value) q.set('source_system', $('reconSys').value);
+  if ($('reconAsset').value) q.set('asset_code', $('reconAsset').value);
+  const j = await api('/api/v1/ledger/reconcile/reports/' + encodeURIComponent(date) + '?' + q.toString());
+  showReport(j.data);
+}
+async function openJob(id) {
+  const j = await api('/api/v1/ledger/reconcile/jobs/' + encodeURIComponent(id));
+  showReport(j.data);
+}
+function showReport(data) {
+  const job = data && data.job || data || {};
+  $('reconSum').textContent = JSON.stringify(job.summary || job, null, 2);
+  const diffs = (data && data.diffs) || [];
+  $('diffTable').innerHTML = table(
+    [{label:'Diff', key:'diff_id', mono:true}, {label:'类型', key:'kind'}, {label:'biz_no', key:'biz_no', mono:true},
+     {label:'业务金额', key:'biz_amount'}, {label:'账本金额', key:'ledger_amount'}, {label:'状态', html:true, value: r => badge(v(r,'status'))}],
+    diffs,
+    r => v(r,'status') === 'open' ? `<button class="ghost" onclick="fillDiff('${esc(v(r,'diff_id'))}')">选用</button>` : ''
+  );
+}
+function fillDiff(id) { $('diffId').value = id; }
 async function resolveDiff() {
-  const id = document.getElementById('diffId').value;
-  const note = document.getElementById('diffNote').value;
-  document.getElementById('msg').textContent = JSON.stringify(await api('/api/v1/ledger/reconcile/diffs/'+id+'/resolve', {method:'POST', headers: headers(true), body: JSON.stringify({note})}));
+  await api('/api/v1/ledger/reconcile/diffs/' + encodeURIComponent($('diffId').value) + '/resolve', {
+    method:'POST', body: JSON.stringify({note: $('diffNote').value})
+  });
+  toast('差异已关闭');
+  if ($('reconDate').value) loadReport().catch(() => {});
 }
-load();
+
+async function reloadCfg() {
+  const j = await api('/api/v1/ledger/ops/reload', {method:'POST', body:'{}'});
+  toast('配置已重载');
+  overview.limits = (j.data && j.data.limits) || overview.limits;
+  overview.acl = (j.data && j.data.acl) || overview.acl;
+  render();
+}
+
+window.addEventListener('hashchange', () => { try { render(); } catch (e) { toast(e.message, true); } });
+window.addEventListener('unhandledrejection', ev => toast(String(ev.reason && ev.reason.message || ev.reason), true));
+
+async function boot() {
+  $('token').value = localStorage.getItem(TOKEN_KEY) || '';
+  try {
+    await loadOverview();
+    $('login').classList.add('hidden');
+    $('app').classList.remove('hidden');
+    if (!location.hash) location.hash = '#/dashboard';
+    render();
+  } catch (e) {
+    showLogin();
+    if (e.message && e.message !== '未授权') toast(e.message, true);
+  }
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && $('login') && !$('login').classList.contains('hidden')) unlock();
+});
+boot();
 </script>
 </body>
 </html>

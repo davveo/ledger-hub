@@ -186,6 +186,13 @@ func (s *ReconcileService) ReportByDate(ctx context.Context, tenantID, date, sou
 	return &ReconcileReport{Job: job, Diffs: diffs}, nil
 }
 
+func (s *ReconcileService) ListJobs(ctx context.Context, tenantID string, limit int) ([]*domain.ReconcileJob, error) {
+	if s == nil || s.store == nil {
+		return nil, domain.ErrNotFound
+	}
+	return s.store.ListJobs(ctx, tenantID, limit)
+}
+
 func (s *ReconcileService) ResolveDiff(ctx context.Context, diffID, note string) error {
 	if diffID == "" {
 		return domain.ErrInvalidParam

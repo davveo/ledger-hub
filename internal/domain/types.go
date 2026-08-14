@@ -58,29 +58,29 @@ type Holder struct {
 }
 
 type Asset struct {
-	TenantID         string
-	AssetCode        string
-	Name             string
-	AssetClass       string
-	CurrencyCode     string
-	Precision        int
-	HolderTypes      []string
-	FreezeSupported  bool
-	OverdraftAllowed bool
-	Status           AssetStatus
-	Ext              string
+	TenantID         string      `json:"tenant_id"`
+	AssetCode        string      `json:"asset_code"`
+	Name             string      `json:"name"`
+	AssetClass       string      `json:"asset_class"`
+	CurrencyCode     string      `json:"currency_code"`
+	Precision        int         `json:"precision"`
+	HolderTypes      []string    `json:"holder_types,omitempty"`
+	FreezeSupported  bool        `json:"freeze_supported"`
+	OverdraftAllowed bool        `json:"overdraft_allowed"`
+	Status           AssetStatus `json:"status"`
+	Ext              string      `json:"ext,omitempty"`
 }
 
 type Account struct {
-	AccountID  string
-	TenantID   string
-	HolderType HolderType
-	HolderID   string
-	AssetCode  string
-	Available  int64
-	Frozen     int64
-	Version    int64
-	Status     AccountStatus
+	AccountID  string        `json:"account_id"`
+	TenantID   string        `json:"tenant_id"`
+	HolderType HolderType    `json:"holder_type"`
+	HolderID   string        `json:"holder_id"`
+	AssetCode  string        `json:"asset_code"`
+	Available  int64         `json:"available"`
+	Frozen     int64         `json:"frozen"`
+	Version    int64         `json:"version"`
+	Status     AccountStatus `json:"status"`
 }
 
 func (a *Account) Total() int64 {
@@ -88,35 +88,35 @@ func (a *Account) Total() int64 {
 }
 
 type LedgerEntry struct {
-	EntryID        string
-	AccountID      string
-	TenantID       string
-	AssetCode      string
-	HolderType     HolderType
-	HolderID       string
-	Direction      Direction
-	Amount         int64
-	AvailableAfter int64
-	FrozenAfter    int64
-	Command        Command
-	SourceSystem   string
-	BizType        string
-	BizNo          string
-	JournalID      string
-	FreezeID       string
-	RelatedBizNo   string
-	CreatedAt      time.Time
+	EntryID        string     `json:"entry_id"`
+	AccountID      string     `json:"account_id"`
+	TenantID       string     `json:"tenant_id"`
+	AssetCode      string     `json:"asset_code"`
+	HolderType     HolderType `json:"holder_type"`
+	HolderID       string     `json:"holder_id"`
+	Direction      Direction  `json:"direction"`
+	Amount         int64      `json:"amount"`
+	AvailableAfter int64      `json:"available_after"`
+	FrozenAfter    int64      `json:"frozen_after"`
+	Command        Command    `json:"command"`
+	SourceSystem   string     `json:"source_system"`
+	BizType        string     `json:"biz_type,omitempty"`
+	BizNo          string     `json:"biz_no"`
+	JournalID      string     `json:"journal_id,omitempty"`
+	FreezeID       string     `json:"freeze_id,omitempty"`
+	RelatedBizNo   string     `json:"related_biz_no,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 type FreezeOrder struct {
-	FreezeID  string
-	BizNo     string
-	TenantID  string
-	AccountID string
-	AssetCode string
-	Amount    int64
-	Status    FreezeStatus
-	ExpireAt  *time.Time
+	FreezeID  string       `json:"freeze_id"`
+	BizNo     string       `json:"biz_no"`
+	TenantID  string       `json:"tenant_id"`
+	AccountID string       `json:"account_id"`
+	AssetCode string       `json:"asset_code"`
+	Amount    int64        `json:"amount"`
+	Status    FreezeStatus `json:"status"`
+	ExpireAt  *time.Time   `json:"expire_at,omitempty"`
 }
 
 type IdempotencyRecord struct {
@@ -308,15 +308,15 @@ type BizLine struct {
 }
 
 type ReconcileJob struct {
-	JobID        string
-	TenantID     string
-	Date         string
-	SourceSystem string
-	AssetCode    string
-	Status       string
-	Summary      *ReconcileSummary
-	Note         string
-	CreatedAt    time.Time
+	JobID        string            `json:"job_id"`
+	TenantID     string            `json:"tenant_id"`
+	Date         string            `json:"date"`
+	SourceSystem string            `json:"source_system,omitempty"`
+	AssetCode    string            `json:"asset_code,omitempty"`
+	Status       string            `json:"status"`
+	Summary      *ReconcileSummary `json:"summary,omitempty"`
+	Note         string            `json:"note,omitempty"`
+	CreatedAt    time.Time         `json:"created_at"`
 }
 
 type ReconcileSummary struct {
@@ -336,17 +336,17 @@ type ReconcileSummary struct {
 }
 
 type ReconcileDiff struct {
-	DiffID       string
-	JobID        string
-	Kind         string
-	BizNo        string
-	Command      Command
-	AssetCode    string
-	BizAmount    int64
-	LedgerAmount int64
-	AccountID    string
-	Status       string
-	Note         string
+	DiffID       string  `json:"diff_id"`
+	JobID        string  `json:"job_id"`
+	Kind         string  `json:"kind"`
+	BizNo        string  `json:"biz_no,omitempty"`
+	Command      Command `json:"command,omitempty"`
+	AssetCode    string  `json:"asset_code,omitempty"`
+	BizAmount    int64   `json:"biz_amount"`
+	LedgerAmount int64   `json:"ledger_amount"`
+	AccountID    string  `json:"account_id,omitempty"`
+	Status       string  `json:"status"`
+	Note         string  `json:"note,omitempty"`
 }
 
 type CommandResult struct {

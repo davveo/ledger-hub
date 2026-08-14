@@ -39,6 +39,28 @@ func (r *ReconcileRepo) GetJob(ctx context.Context, jobID string) (*domain.Recon
 	return jobFromModel(&m), nil
 }
 
+func (r *ReconcileRepo) ListJobs(ctx context.Context, tenantID string, limit int) ([]*domain.ReconcileJob, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	q := dbFrom(ctx, r.db).Order("id desc").Limit(limit)
+	if tenantID != "" {
+		q = q.Where("tenant_id = ?", tenantID)
+	}
+	var rows []LedgerReconcileJob
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]*domain.ReconcileJob, 0, len(rows))
+	for i := range rows {
+		out = append(out, jobFromModel(&rows[i]))
+	}
+	return out, nil
+}
+
 func (r *ReconcileRepo) LatestJob(ctx context.Context, tenantID, date, sourceSystem, assetCode string) (*domain.ReconcileJob, error) {
 	q := dbFrom(ctx, r.db).Where("tenant_id = ? AND biz_date = ?", tenantID, date)
 	if sourceSystem != "" {

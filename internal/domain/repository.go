@@ -50,6 +50,7 @@ type ReconcileRepository interface {
 	CreateJob(ctx context.Context, job *ReconcileJob) error
 	UpdateJob(ctx context.Context, job *ReconcileJob) error
 	GetJob(ctx context.Context, jobID string) (*ReconcileJob, error)
+	ListJobs(ctx context.Context, tenantID string, limit int) ([]*ReconcileJob, error)
 	LatestJob(ctx context.Context, tenantID, date, sourceSystem, assetCode string) (*ReconcileJob, error)
 	CreateDiffs(ctx context.Context, diffs []*ReconcileDiff) error
 	ListDiffs(ctx context.Context, jobID string) ([]*ReconcileDiff, error)

@@ -114,6 +114,7 @@ ledger-hub/
 
 ```bash
 make docker-up          # MySQL + API + Gateway + Worker + Connector
+# 基础镜像默认走 docker.m.daocloud.io，避免 Docker Hub 超时
 ```
 
 等价于：
@@ -256,8 +257,11 @@ GET  /api/v1/ledger/journals/{id}
 GET  /api/v1/ledger/freezes/{freeze_id}
 GET  /api/v1/ledger/freezes?biz_no=order:O001
 POST /api/v1/ledger/reconcile/jobs
+GET  /api/v1/ledger/reconcile/jobs
 GET  /api/v1/ledger/reconcile/jobs/{id}
 GET  /api/v1/ledger/reconcile/reports/{date}?source_system=order&asset_code=POINT
+GET  /api/v1/ledger/reconcile/files
+GET  /api/v1/ledger/reconcile/files/{name}
 POST /api/v1/ledger/reconcile/diffs/{id}/resolve
 POST /api/v1/ledger/fx/rates
 GET  /api/v1/ledger/fx/rates
@@ -383,7 +387,7 @@ wallet    → Credit / Debit / Freeze / Capture / Release / Transfer / Exchange 
 worker    → Release / Debit / Transfer / Reverse *
 ```
 
-运营台：浏览器打开 `http://127.0.0.1:8080/console`，或经网关 `http://127.0.0.1:8088/console`（需 `X-Console-Token`）。OpenAPI：`GET /api/v1/ledger/openapi.yaml`。Gateway 写/读请求均需 HMAC，时间窗默认 300s。
+运营台：浏览器打开 `http://127.0.0.1:8080/console`，或经网关 `http://127.0.0.1:8088/console`（需 `X-Console-Token`，默认 `dev-console-token`）。后台按模块管理资产、租户、账户启停、流水/冻结检索、冲正、汇率、日终对账与差异工单、ACL/限额热加载。OpenAPI：`GET /api/v1/ledger/openapi.yaml`。Gateway 写/读请求均需 HMAC，时间窗默认 300s。
 
 分库：`mysql.shards` 配置额外 DSN；账户 / 流水 / 冻结 / 幂等按 `holder_id` 哈希路由。未配置时仍为单库。同 holder 的 Exchange 落在同一分片；跨 holder Transfer 若分片不同则经 `pending_settlement` 两段记账。
 
