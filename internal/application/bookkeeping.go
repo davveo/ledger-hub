@@ -13,13 +13,18 @@ import (
 )
 
 type Bookkeeping struct {
-	tx      domain.TxManager
-	assets  domain.AssetRepository
-	accs    domain.AccountRepository
-	entries domain.EntryRepository
-	freezes domain.FreezeRepository
-	idem    domain.IdempotencyRepository
-	acl     *ACL
+	tx        domain.TxManager
+	assets    domain.AssetRepository
+	accs      domain.AccountRepository
+	entries   domain.EntryRepository
+	freezes   domain.FreezeRepository
+	idem      domain.IdempotencyRepository
+	acl       *ACL
+	journals  domain.JournalRepository
+	fx        domain.FxRateRepository
+	legs      domain.ExchangeLegRepository
+	limiter   *Limiter
+	sameShard func(a, b string) bool
 }
 
 func NewBookkeeping(
@@ -34,14 +39,35 @@ func NewBookkeeping(
 	return &Bookkeeping{tx: tx, assets: assets, accs: accs, entries: entries, freezes: freezes, idem: idem, acl: acl}
 }
 
+func (s *Bookkeeping) UsePhase3(
+	journals domain.JournalRepository,
+	fx domain.FxRateRepository,
+	legs domain.ExchangeLegRepository,
+	limiter *Limiter,
+	sameShard func(a, b string) bool,
+) *Bookkeeping {
+	s.journals = journals
+	s.fx = fx
+	s.legs = legs
+	s.limiter = limiter
+	s.sameShard = sameShard
+	return s
+}
+
 func (s *Bookkeeping) Execute(ctx context.Context, req domain.CommandRequest) (*domain.CommandResult, error) {
+	if req.Command == domain.CmdCapture || req.Command == domain.CmdRelease {
+		if err := s.resolveFreezeHolder(ctx, &req); err != nil {
+			return nil, err
+		}
+	}
+	if req.Holder.ID != "" {
+		ctx = domain.WithHolder(ctx, req.Holder.ID)
+	}
 	if err := validateBase(req); err != nil {
 		return nil, err
 	}
-	if req.Command != domain.CmdCapture && req.Command != domain.CmdRelease {
-		if err := s.acl.Check(req); err != nil {
-			return nil, err
-		}
+	if err := s.acl.Check(req); err != nil {
+		return nil, err
 	}
 	switch req.Command {
 	case domain.CmdCredit:
@@ -57,7 +83,7 @@ func (s *Bookkeeping) Execute(ctx context.Context, req domain.CommandRequest) (*
 	case domain.CmdTransfer:
 		return s.transfer(ctx, req)
 	case domain.CmdExchange:
-		return nil, domain.ErrNotImplemented
+		return s.exchange(ctx, req)
 	default:
 		return nil, domain.NewError(domain.CodeInvalidParam, "未知命令")
 	}
@@ -89,6 +115,9 @@ func (s *Bookkeeping) mutate(ctx context.Context, req domain.CommandRequest, fn 
 		}
 		acc, err := s.getOrOpenLocked(ctx, req.TenantID, req.Holder, req.AssetCode)
 		if err != nil {
+			return err
+		}
+		if err := s.limiter.Check(ctx, req); err != nil {
 			return err
 		}
 		res, err := fn(ctx, s, req, acc, asset)
@@ -172,6 +201,36 @@ func applyFreeze(ctx context.Context, s *Bookkeeping, req domain.CommandRequest,
 	return newResult(acc, []string{entry.EntryID}, fz.FreezeID, ""), nil
 }
 
+func (s *Bookkeeping) resolveFreezeHolder(ctx context.Context, req *domain.CommandRequest) error {
+	if req.Holder.ID != "" && req.AssetCode != "" {
+		return nil
+	}
+	var fz *domain.FreezeOrder
+	var err error
+	if req.FreezeID != "" {
+		fz, err = s.freezes.GetByID(ctx, req.FreezeID)
+	} else if req.RelatedBizNo != "" {
+		fz, err = s.freezes.GetByBizNo(ctx, req.TenantID, req.RelatedBizNo)
+	} else if req.BizNo != "" {
+		fz, err = s.freezes.GetByBizNo(ctx, req.TenantID, req.BizNo)
+	} else {
+		return domain.ErrInvalidParam
+	}
+	if err != nil {
+		return err
+	}
+	acc, err := s.accs.GetByID(ctx, fz.AccountID)
+	if err != nil {
+		return err
+	}
+	req.AssetCode = fz.AssetCode
+	req.Holder = domain.Holder{Type: acc.HolderType, ID: acc.HolderID}
+	if req.FreezeID == "" {
+		req.FreezeID = fz.FreezeID
+	}
+	return nil
+}
+
 func (s *Bookkeeping) captureOrRelease(ctx context.Context, req domain.CommandRequest, capture bool) (*domain.CommandResult, error) {
 	hash := requestHash(req)
 	var result *domain.CommandResult
@@ -196,9 +255,6 @@ func (s *Bookkeeping) captureOrRelease(ctx context.Context, req domain.CommandRe
 			return err
 		}
 		req.AssetCode = fz.AssetCode
-		if err := s.acl.Check(req); err != nil {
-			return err
-		}
 		if fz.Status != domain.FreezeFrozen {
 			return domain.ErrFreezeStateInvalid
 		}
@@ -254,6 +310,9 @@ func (s *Bookkeeping) transfer(ctx context.Context, req domain.CommandRequest) (
 	if req.Amount <= 0 {
 		return nil, domain.ErrInvalidParam
 	}
+	if s.sameShard != nil && req.ToHolder != nil && !s.sameShard(req.Holder.ID, req.ToHolder.ID) {
+		return nil, domain.ErrCrossShard
+	}
 	hash := requestHash(req)
 	var result *domain.CommandResult
 	err := s.tx.WithinTx(ctx, func(ctx context.Context) error {
@@ -264,6 +323,9 @@ func (s *Bookkeeping) transfer(ctx context.Context, req domain.CommandRequest) (
 		if replay != nil {
 			result = replay
 			return nil
+		}
+		if err := s.limiter.Check(ctx, req); err != nil {
+			return err
 		}
 		asset, err := s.assets.Get(ctx, req.TenantID, req.AssetCode)
 		if err != nil {
@@ -304,6 +366,16 @@ func (s *Bookkeeping) transfer(ctx context.Context, req domain.CommandRequest) (
 			return err
 		}
 		journalID := idgen.New("jnl_")
+		if err := s.writeJournal(ctx, &domain.Journal{
+			JournalID:    journalID,
+			TenantID:     req.TenantID,
+			BizNo:        req.BizNo,
+			JournalType:  domain.JournalTransfer,
+			Status:       "posted",
+			EntriesCount: 2,
+		}); err != nil {
+			return err
+		}
 		e1, err := s.writeEntry(ctx, req, fromAcc, domain.DirOUT, req.Amount, "", journalID)
 		if err != nil {
 			return err
@@ -406,6 +478,16 @@ func (s *Bookkeeping) saveIdempotency(ctx context.Context, req domain.CommandReq
 	})
 }
 
+func (s *Bookkeeping) writeJournal(ctx context.Context, j *domain.Journal) error {
+	if s.journals == nil {
+		return nil
+	}
+	if j.Status == "" {
+		j.Status = "posted"
+	}
+	return s.journals.Create(ctx, j)
+}
+
 func validateBase(req domain.CommandRequest) error {
 	if req.BizNo == "" || req.SourceSystem == "" || req.TenantID == "" {
 		return domain.ErrInvalidParam
@@ -419,10 +501,14 @@ func validateBase(req domain.CommandRequest) error {
 }
 
 func requestHash(req domain.CommandRequest) string {
-	payload := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%d|%s|%s|%d",
+	rate := ""
+	if req.Fx != nil {
+		rate = req.Fx.RateID + "|" + req.Fx.Rate
+	}
+	payload := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%d|%s|%s|%d|%s|%d|%s|%d",
 		req.Command, req.TenantID, req.SourceSystem, req.BizNo,
 		req.Holder.Type, req.Holder.ID, req.AssetCode, req.Amount,
-		req.FreezeID, req.ToAssetCode, req.ToAmount)
+		req.FreezeID, req.ToAssetCode, req.ToAmount, req.FeeAsset, req.FeeAmount, rate, req.Tolerance)
 	sum := sha256.Sum256([]byte(payload))
 	return hex.EncodeToString(sum[:])
 }

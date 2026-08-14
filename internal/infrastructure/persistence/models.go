@@ -207,6 +207,7 @@ func (LedgerIdempotency) TableName() string { return "ledger_idempotency" }
 type LedgerJournal struct {
 	ID           uint64 `gorm:"primaryKey;autoIncrement"`
 	JournalID    string `gorm:"size:64;uniqueIndex;not null"`
+	TenantID     string `gorm:"size:64;index;not null"`
 	BizNo        string `gorm:"size:128;index;not null"`
 	JournalType  string `gorm:"size:32;not null"`
 	Status       string `gorm:"size:16;not null"`
@@ -214,6 +215,19 @@ type LedgerJournal struct {
 	FxRateID     string `gorm:"size:64"`
 	Ext          string `gorm:"type:text"`
 	CreatedAt    time.Time
+}
+
+func (m *LedgerJournal) toDomain() *domain.Journal {
+	return &domain.Journal{
+		JournalID:    m.JournalID,
+		TenantID:     m.TenantID,
+		BizNo:        m.BizNo,
+		JournalType:  m.JournalType,
+		Status:       m.Status,
+		EntriesCount: m.EntriesCount,
+		FxRateID:     m.FxRateID,
+		Ext:          m.Ext,
+	}
 }
 
 func (LedgerJournal) TableName() string { return "ledger_journal" }
@@ -269,3 +283,90 @@ type LedgerReconcileDiff struct {
 }
 
 func (LedgerReconcileDiff) TableName() string { return "ledger_reconcile_diff" }
+
+type LedgerExchangeLeg struct {
+	ID         uint64 `gorm:"primaryKey;autoIncrement"`
+	ExchangeID string `gorm:"size:64;uniqueIndex;not null"`
+	JournalID  string `gorm:"size:64;index;not null"`
+	BizNo      string `gorm:"size:128;index;not null"`
+	TenantID   string `gorm:"size:64;index;not null"`
+	HolderType string `gorm:"size:32;not null"`
+	HolderID   string `gorm:"size:64;index;not null"`
+	FromAsset  string `gorm:"size:64;not null"`
+	FromAmount int64  `gorm:"not null"`
+	ToAsset    string `gorm:"size:64;not null"`
+	ToAmount   int64  `gorm:"not null"`
+	FeeAsset   string `gorm:"size:64"`
+	FeeAmount  int64
+	RateID     string `gorm:"size:64"`
+	Rate       string `gorm:"size:32"`
+	Status     string `gorm:"size:16;not null"`
+	CreatedAt  time.Time
+}
+
+func (LedgerExchangeLeg) TableName() string { return "ledger_exchange_leg" }
+
+func (m *LedgerExchangeLeg) toDomain() *domain.ExchangeLeg {
+	return &domain.ExchangeLeg{
+		ExchangeID: m.ExchangeID,
+		JournalID:  m.JournalID,
+		BizNo:      m.BizNo,
+		TenantID:   m.TenantID,
+		HolderType: domain.HolderType(m.HolderType),
+		HolderID:   m.HolderID,
+		FromAsset:  m.FromAsset,
+		FromAmount: m.FromAmount,
+		ToAsset:    m.ToAsset,
+		ToAmount:   m.ToAmount,
+		FeeAsset:   m.FeeAsset,
+		FeeAmount:  m.FeeAmount,
+		RateID:     m.RateID,
+		Rate:       m.Rate,
+		Status:     m.Status,
+	}
+}
+
+type LedgerTenant struct {
+	ID        uint64 `gorm:"primaryKey;autoIncrement"`
+	TenantID  string `gorm:"size:64;uniqueIndex;not null"`
+	Name      string `gorm:"size:128;not null"`
+	Status    string `gorm:"size:16;not null"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (LedgerTenant) TableName() string { return "ledger_tenant" }
+
+func (m *LedgerTenant) toDomain() *domain.Tenant {
+	return &domain.Tenant{TenantID: m.TenantID, Name: m.Name, Status: m.Status}
+}
+
+type LedgerLimitUsage struct {
+	ID           uint64 `gorm:"primaryKey;autoIncrement"`
+	TenantID     string `gorm:"size:64;uniqueIndex:uk_limit;not null"`
+	SourceSystem string `gorm:"size:64;uniqueIndex:uk_limit;not null"`
+	HolderID     string `gorm:"size:64;uniqueIndex:uk_limit;not null"`
+	AssetCode    string `gorm:"size:64;uniqueIndex:uk_limit;not null"`
+	Command      string `gorm:"size:32;uniqueIndex:uk_limit;not null"`
+	BizDate      string `gorm:"size:16;uniqueIndex:uk_limit;not null"`
+	Amount       int64  `gorm:"not null"`
+	Count        int    `gorm:"not null"`
+	UpdatedAt    time.Time
+}
+
+func (LedgerLimitUsage) TableName() string { return "ledger_limit_usage" }
+
+func (m *LedgerFxRate) toDomain() *domain.FxRate {
+	return &domain.FxRate{
+		RateID:     m.RateID,
+		TenantID:   m.TenantID,
+		BaseAsset:  m.BaseAsset,
+		QuoteAsset: m.QuoteAsset,
+		Rate:       m.Rate,
+		RateSource: m.RateSource,
+		ValidFrom:  m.ValidFrom,
+		ValidTo:    m.ValidTo,
+		QuotedAt:   m.QuotedAt,
+		CreatedBy:  m.CreatedBy,
+	}
+}

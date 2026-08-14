@@ -30,6 +30,7 @@ type EntryRepository interface {
 	ListByHolder(ctx context.Context, tenantID string, holder Holder, assetCode string, from, to *time.Time) ([]*LedgerEntry, error)
 	ListByRange(ctx context.Context, tenantID, sourceSystem, assetCode string, from, to time.Time) ([]*LedgerEntry, error)
 	ListByAccount(ctx context.Context, accountID string) ([]*LedgerEntry, error)
+	ListByJournal(ctx context.Context, journalID string) ([]*LedgerEntry, error)
 }
 
 type FreezeRepository interface {
@@ -54,4 +55,33 @@ type ReconcileRepository interface {
 type IdempotencyRepository interface {
 	Get(ctx context.Context, tenantID, sourceSystem, bizNo string, cmd Command) (*IdempotencyRecord, error)
 	Create(ctx context.Context, rec *IdempotencyRecord) error
+}
+
+type JournalRepository interface {
+	Create(ctx context.Context, j *Journal) error
+	Get(ctx context.Context, journalID string) (*Journal, error)
+	ListByRange(ctx context.Context, tenantID, journalType string, from, to time.Time) ([]*Journal, error)
+}
+
+type FxRateRepository interface {
+	Save(ctx context.Context, r *FxRate) error
+	Get(ctx context.Context, rateID string) (*FxRate, error)
+	Find(ctx context.Context, tenantID, base, quote string, at time.Time) (*FxRate, error)
+	List(ctx context.Context, tenantID string) ([]*FxRate, error)
+}
+
+type ExchangeLegRepository interface {
+	Create(ctx context.Context, leg *ExchangeLeg) error
+	GetByBizNo(ctx context.Context, tenantID, bizNo string) (*ExchangeLeg, error)
+	ListByRange(ctx context.Context, tenantID string, from, to time.Time) ([]*ExchangeLeg, error)
+}
+
+type TenantRepository interface {
+	Save(ctx context.Context, t *Tenant) error
+	Get(ctx context.Context, tenantID string) (*Tenant, error)
+	List(ctx context.Context) ([]*Tenant, error)
+}
+
+type LimitRepository interface {
+	AddUsage(ctx context.Context, tenantID, source, holderID, asset string, cmd Command, date string, amount int64) (sum int64, count int, err error)
 }

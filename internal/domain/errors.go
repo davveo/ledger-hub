@@ -10,6 +10,8 @@ const (
 	CodeIdempotencyConflict = 40901
 	CodeInsufficient        = 42201
 	CodeFreezeStateInvalid  = 42202
+	CodeSlippage            = 42203
+	CodeCrossShard          = 42204
 	CodeRateLimited         = 42901
 	CodeNotImplemented      = 50101
 	CodeInternal            = 50000
@@ -43,6 +45,8 @@ var (
 	ErrIdempotencyConflict = NewError(CodeIdempotencyConflict, "幂等冲突但命令参数不一致")
 	ErrInsufficient        = NewError(CodeInsufficient, "余额不足")
 	ErrFreezeStateInvalid  = NewError(CodeFreezeStateInvalid, "冻结单状态不允许 Capture/Release")
+	ErrSlippage            = NewError(CodeSlippage, "兑换金额超出允许滑点")
+	ErrCrossShard          = NewError(CodeCrossShard, "跨分片转账请经系统科目，禁止直接 Transfer")
 	ErrRateLimited         = NewError(CodeRateLimited, "触发限额")
 	ErrNotImplemented      = NewError(CodeNotImplemented, "能力尚未交付")
 	ErrInternal            = NewError(CodeInternal, "内部错误")

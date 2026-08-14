@@ -17,10 +17,18 @@ type ReconcileService struct {
 	accs    domain.AccountRepository
 	freezes domain.FreezeRepository
 	store   domain.ReconcileRepository
+	legs    domain.ExchangeLegRepository
+	journals domain.JournalRepository
 }
 
 func NewReconcileService(entries domain.EntryRepository, accs domain.AccountRepository, freezes domain.FreezeRepository, store domain.ReconcileRepository) *ReconcileService {
 	return &ReconcileService{entries: entries, accs: accs, freezes: freezes, store: store}
+}
+
+func (s *ReconcileService) UsePhase3(legs domain.ExchangeLegRepository, journals domain.JournalRepository) *ReconcileService {
+	s.legs = legs
+	s.journals = journals
+	return s
 }
 
 type ReconcileReport struct {
@@ -95,6 +103,12 @@ func (s *ReconcileService) Trigger(ctx context.Context, tenantID, date, sourceSy
 		l3[i].JobID = job.JobID
 	}
 	diffs = append(diffs, l3...)
+
+	l4 := s.fxTieOut(entries)
+	for i := range l4 {
+		l4[i].JobID = job.JobID
+	}
+	diffs = append(diffs, l4...)
 
 	sum := summarize(len(entries), len(bizLines), diffs, inAmt, outAmt)
 	job.Status = domain.ReconJobDone
@@ -272,6 +286,43 @@ func (s *ReconcileService) freezeTieOut(ctx context.Context, tenantID, assetCode
 	return diffs, nil
 }
 
+func (s *ReconcileService) fxTieOut(entries []*domain.LedgerEntry) []*domain.ReconcileDiff {
+	type gkey struct{ journal, biz string }
+	groups := map[gkey][]*domain.LedgerEntry{}
+	for _, e := range entries {
+		if e.Command != domain.CmdExchange {
+			continue
+		}
+		k := gkey{e.JournalID, e.BizNo}
+		groups[k] = append(groups[k], e)
+	}
+	var diffs []*domain.ReconcileDiff
+	for k, es := range groups {
+		if k.journal == "" {
+			diffs = append(diffs, newDiff("", domain.DiffFxIncomplete, k.biz, domain.CmdExchange, "", 0, 0, "缺少 journal_id"))
+			continue
+		}
+		var userOut, userIn bool
+		assets := map[string]struct{}{}
+		for _, e := range es {
+			assets[e.AssetCode] = struct{}{}
+			if e.HolderType == domain.HolderSystemSubject {
+				continue
+			}
+			if e.Direction == domain.DirOUT {
+				userOut = true
+			}
+			if e.Direction == domain.DirIN {
+				userIn = true
+			}
+		}
+		if !userOut || !userIn || len(assets) < 2 {
+			diffs = append(diffs, newDiff("", domain.DiffFxIncomplete, k.biz, domain.CmdExchange, "", 0, 0, "兑换分录不完整"))
+		}
+	}
+	return diffs
+}
+
 func reconstruct(entries []*domain.LedgerEntry) (available, frozen int64) {
 	for _, e := range entries {
 		switch e.Command {
@@ -287,7 +338,7 @@ func reconstruct(entries []*domain.LedgerEntry) (available, frozen int64) {
 		case domain.CmdRelease:
 			frozen -= e.Amount
 			available += e.Amount
-		case domain.CmdTransfer:
+		case domain.CmdTransfer, domain.CmdExchange:
 			if e.Direction == domain.DirIN {
 				available += e.Amount
 			} else {
@@ -319,6 +370,8 @@ func summarize(ledgerN, bizN int, diffs []*domain.ReconcileDiff, inAmt, outAmt i
 			sum.BalanceTieOut++
 		case domain.DiffFreezeTieOut:
 			sum.FreezeTieOut++
+		case domain.DiffFxIncomplete:
+			sum.FxIncomplete++
 		}
 	}
 	matched := bizN - sum.Missing - sum.AmountMismatch - sum.AssetMismatch

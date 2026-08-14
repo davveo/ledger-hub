@@ -18,11 +18,21 @@ type Server struct {
 	books    *application.Bookkeeping
 	query    *application.QueryService
 	recon    *application.ReconcileService
+	fx       *application.FxService
+	tenants  *application.TenantService
+	limits   []domain.LimitRule
 	tenant   string
 }
 
 func New(assets *application.AssetService, accounts *application.AccountService, books *application.Bookkeeping, query *application.QueryService, recon *application.ReconcileService, defaultTenant string) *Server {
 	return &Server{assets: assets, accounts: accounts, books: books, query: query, recon: recon, tenant: defaultTenant}
+}
+
+func (s *Server) WithPhase3(fx *application.FxService, tenants *application.TenantService, limits []domain.LimitRule) *Server {
+	s.fx = fx
+	s.tenants = tenants
+	s.limits = limits
+	return s
 }
 
 func (s *Server) Engine() *gin.Engine {
@@ -31,9 +41,11 @@ func (s *Server) Engine() *gin.Engine {
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "ledger-api"})
 	})
+	r.GET("/console", s.consolePage)
 	g := r.Group("/api/v1/ledger")
 	{
 		g.POST("/assets", s.registerAsset)
+		g.GET("/assets", s.listAssets)
 		g.GET("/assets/:asset_code", s.getAsset)
 
 		g.POST("/accounts/open", s.openAccount)
@@ -50,13 +62,24 @@ func (s *Server) Engine() *gin.Engine {
 		g.POST("/commands/exchange", s.wrap(domain.CmdExchange))
 
 		g.GET("/entries", s.listEntries)
+		g.GET("/journals/:id", s.getJournal)
 		g.GET("/freezes/:freeze_id", s.getFreeze)
 		g.GET("/freezes", s.getFreezeByBizNo)
+
+		g.POST("/fx/rates", s.saveFxRate)
+		g.GET("/fx/rates", s.listFxRates)
+		g.GET("/fx/rates/:rate_id", s.getFxRate)
+
+		g.POST("/tenants", s.saveTenant)
+		g.GET("/tenants", s.listTenants)
+		g.GET("/tenants/:id", s.getTenant)
 
 		g.POST("/reconcile/jobs", s.triggerReconcile)
 		g.GET("/reconcile/jobs/:id", s.getReconcileJob)
 		g.GET("/reconcile/reports/:date", s.getReconcileReport)
 		g.POST("/reconcile/diffs/:id/resolve", s.resolveDiff)
+
+		g.GET("/console/overview", s.consoleOverview)
 	}
 	return r
 }
@@ -81,7 +104,7 @@ func fail(c *gin.Context, err error) {
 			status = http.StatusForbidden
 		case domain.CodeIdempotencyConflict:
 			status = http.StatusConflict
-		case domain.CodeInsufficient, domain.CodeFreezeStateInvalid:
+		case domain.CodeInsufficient, domain.CodeFreezeStateInvalid, domain.CodeSlippage, domain.CodeCrossShard:
 			status = http.StatusUnprocessableEntity
 		case domain.CodeRateLimited:
 			status = http.StatusTooManyRequests
@@ -111,8 +134,20 @@ type commandDTO struct {
 	ToHolder     *domain.Holder         `json:"to_holder"`
 	To           *amountAsset           `json:"to"`
 	From         *amountAsset           `json:"from"`
+	Fee          *amountAsset           `json:"fee"`
+	Fx           *fxDTO                 `json:"fx"`
+	Tolerance    string                 `json:"tolerance"`
 	ExpireAt     string                 `json:"expire_at"`
 	Ext          map[string]interface{} `json:"ext"`
+}
+
+type fxDTO struct {
+	RateID     string `json:"rate_id"`
+	BaseAsset  string `json:"base_asset"`
+	QuoteAsset string `json:"quote_asset"`
+	Rate       string `json:"rate"`
+	RateSource string `json:"rate_source"`
+	QuotedAt   string `json:"quoted_at"`
 }
 
 type amountAsset struct {
@@ -167,6 +202,13 @@ func (s *Server) handleCommand(c *gin.Context, forced domain.Command) {
 		toAmount, _ = parseAmount(dto.To.Amount)
 		toAsset = dto.To.AssetCode
 	}
+	var feeAmt int64
+	feeAsset := ""
+	if dto.Fee != nil {
+		feeAmt, _ = parseAmount(dto.Fee.Amount)
+		feeAsset = dto.Fee.AssetCode
+	}
+	tol, _ := parseAmount(dto.Tolerance)
 	req := domain.CommandRequest{
 		Command:      cmd,
 		RequestID:    dto.RequestID,
@@ -182,7 +224,32 @@ func (s *Server) handleCommand(c *gin.Context, forced domain.Command) {
 		ToHolder:     dto.ToHolder,
 		ToAssetCode:  toAsset,
 		ToAmount:     toAmount,
+		FeeAsset:     feeAsset,
+		FeeAmount:    feeAmt,
+		Tolerance:    tol,
 		Ext:          dto.Ext,
+	}
+	if dto.Fx != nil {
+		q := &domain.FxQuote{
+			RateID:     dto.Fx.RateID,
+			BaseAsset:  dto.Fx.BaseAsset,
+			QuoteAsset: dto.Fx.QuoteAsset,
+			Rate:       dto.Fx.Rate,
+			RateSource: dto.Fx.RateSource,
+		}
+		if dto.Fx.QuotedAt != "" {
+			t, err := time.Parse(time.RFC3339, dto.Fx.QuotedAt)
+			if err != nil {
+				fail(c, domain.NewError(domain.CodeInvalidParam, "fx.quoted_at 需为 RFC3339"))
+				return
+			}
+			q.QuotedAt = t
+		}
+		req.Fx = q
+	}
+	if err := s.ensureTenant(c, req.TenantID); err != nil {
+		fail(c, err)
+		return
 	}
 	if dto.ExpireAt != "" {
 		t, err := time.Parse(time.RFC3339, dto.ExpireAt)
@@ -236,6 +303,10 @@ func (s *Server) registerAsset(c *gin.Context) {
 	if a.CurrencyCode == "" {
 		a.CurrencyCode = a.AssetCode
 	}
+	if err := s.ensureTenant(c, a.TenantID); err != nil {
+		fail(c, err)
+		return
+	}
 	if err := s.assets.Save(c.Request.Context(), a); err != nil {
 		fail(c, err)
 		return
@@ -273,6 +344,19 @@ func (s *Server) openAccount(c *gin.Context) {
 }
 
 func (s *Server) getAccount(c *gin.Context) {
+	if c.Query("holder_id") == "" {
+		list, err := s.accounts.List(c.Request.Context(), s.tenantID(c, ""), c.Query("asset_code"))
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		views := make([]gin.H, 0, len(list))
+		for _, acc := range list {
+			views = append(views, accountView(acc))
+		}
+		ok(c, views)
+		return
+	}
 	holder := domain.Holder{
 		Type: domain.HolderType(c.Query("holder_type")),
 		ID:   c.Query("holder_id"),
@@ -411,6 +495,189 @@ func (s *Server) resolveDiff(c *gin.Context) {
 		return
 	}
 	ok(c, gin.H{"diff_id": c.Param("id"), "status": domain.DiffStatusResolved})
+}
+
+func (s *Server) ensureTenant(c *gin.Context, tenantID string) error {
+	if s.tenants == nil {
+		return nil
+	}
+	return s.tenants.Ensure(c.Request.Context(), tenantID)
+}
+
+func (s *Server) listAssets(c *gin.Context) {
+	list, err := s.assets.List(c.Request.Context(), s.tenantID(c, ""))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, list)
+}
+
+func (s *Server) getJournal(c *gin.Context) {
+	j, entries, err := s.query.Journal(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, gin.H{"journal": j, "entries": entries})
+}
+
+func (s *Server) saveFxRate(c *gin.Context) {
+	if s.fx == nil {
+		fail(c, domain.ErrNotImplemented)
+		return
+	}
+	var dto struct {
+		RateID     string `json:"rate_id"`
+		TenantID   string `json:"tenant_id"`
+		BaseAsset  string `json:"base_asset" binding:"required"`
+		QuoteAsset string `json:"quote_asset" binding:"required"`
+		Rate       string `json:"rate" binding:"required"`
+		RateSource string `json:"rate_source"`
+		QuotedAt   string `json:"quoted_at"`
+		CreatedBy  string `json:"created_by"`
+	}
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		fail(c, domain.NewError(domain.CodeInvalidParam, err.Error()))
+		return
+	}
+	r := &domain.FxRate{
+		RateID:     dto.RateID,
+		TenantID:   s.tenantID(c, dto.TenantID),
+		BaseAsset:  dto.BaseAsset,
+		QuoteAsset: dto.QuoteAsset,
+		Rate:       dto.Rate,
+		RateSource: dto.RateSource,
+		CreatedBy:  dto.CreatedBy,
+	}
+	if dto.QuotedAt != "" {
+		t, err := time.Parse(time.RFC3339, dto.QuotedAt)
+		if err != nil {
+			fail(c, domain.NewError(domain.CodeInvalidParam, "quoted_at 需为 RFC3339"))
+			return
+		}
+		r.QuotedAt = t
+	}
+	if err := s.ensureTenant(c, r.TenantID); err != nil {
+		fail(c, err)
+		return
+	}
+	if err := s.fx.Save(c.Request.Context(), r); err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, r)
+}
+
+func (s *Server) listFxRates(c *gin.Context) {
+	if s.fx == nil {
+		fail(c, domain.ErrNotImplemented)
+		return
+	}
+	tenant := s.tenantID(c, "")
+	if base, quote := c.Query("base"), c.Query("quote"); base != "" && quote != "" {
+		at := time.Now().UTC()
+		if v := c.Query("at"); v != "" {
+			t, err := time.Parse(time.RFC3339, v)
+			if err != nil {
+				fail(c, domain.NewError(domain.CodeInvalidParam, "at 需为 RFC3339"))
+				return
+			}
+			at = t
+		}
+		r, err := s.fx.Quote(c.Request.Context(), tenant, base, quote, at)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		ok(c, r)
+		return
+	}
+	list, err := s.fx.List(c.Request.Context(), tenant)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, list)
+}
+
+func (s *Server) getFxRate(c *gin.Context) {
+	if s.fx == nil {
+		fail(c, domain.ErrNotImplemented)
+		return
+	}
+	r, err := s.fx.Get(c.Request.Context(), c.Param("rate_id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, r)
+}
+
+func (s *Server) saveTenant(c *gin.Context) {
+	if s.tenants == nil {
+		fail(c, domain.ErrNotImplemented)
+		return
+	}
+	var dto domain.Tenant
+	if err := c.ShouldBindJSON(&dto); err != nil {
+		fail(c, domain.NewError(domain.CodeInvalidParam, err.Error()))
+		return
+	}
+	if err := s.tenants.Save(c.Request.Context(), &dto); err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, dto)
+}
+
+func (s *Server) listTenants(c *gin.Context) {
+	if s.tenants == nil {
+		fail(c, domain.ErrNotImplemented)
+		return
+	}
+	list, err := s.tenants.List(c.Request.Context())
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, list)
+}
+
+func (s *Server) getTenant(c *gin.Context) {
+	if s.tenants == nil {
+		fail(c, domain.ErrNotImplemented)
+		return
+	}
+	t, err := s.tenants.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, t)
+}
+
+func (s *Server) consoleOverview(c *gin.Context) {
+	ctx := c.Request.Context()
+	tenant := s.tenantID(c, "")
+	assets, _ := s.assets.List(ctx, tenant)
+	accs, _ := s.accounts.List(ctx, tenant, c.Query("asset_code"))
+	var rates []*domain.FxRate
+	if s.fx != nil {
+		rates, _ = s.fx.List(ctx, tenant)
+	}
+	var tenants []*domain.Tenant
+	if s.tenants != nil {
+		tenants, _ = s.tenants.List(ctx)
+	}
+	ok(c, gin.H{
+		"tenant_id": tenant,
+		"tenants":   tenants,
+		"assets":    assets,
+		"accounts":  accs,
+		"fx_rates":  rates,
+		"limits":    s.limits,
+	})
 }
 
 func accountView(acc *domain.Account) gin.H {

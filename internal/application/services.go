@@ -91,12 +91,18 @@ func (s *AccountService) GetByID(ctx context.Context, accountID string) (*domain
 }
 
 type QueryService struct {
-	entries domain.EntryRepository
-	freezes domain.FreezeRepository
+	entries  domain.EntryRepository
+	freezes  domain.FreezeRepository
+	journals domain.JournalRepository
 }
 
 func NewQueryService(entries domain.EntryRepository, freezes domain.FreezeRepository) *QueryService {
 	return &QueryService{entries: entries, freezes: freezes}
+}
+
+func (s *QueryService) WithJournal(journals domain.JournalRepository) *QueryService {
+	s.journals = journals
+	return s
 }
 
 func (s *QueryService) EntriesByBizNo(ctx context.Context, tenantID, bizNo string) ([]*domain.LedgerEntry, error) {
@@ -119,4 +125,23 @@ func (s *QueryService) FreezeByID(ctx context.Context, freezeID string) (*domain
 
 func (s *QueryService) FreezeByBizNo(ctx context.Context, tenantID, bizNo string) (*domain.FreezeOrder, error) {
 	return s.freezes.GetByBizNo(ctx, tenantID, bizNo)
+}
+
+func (s *QueryService) Journal(ctx context.Context, journalID string) (*domain.Journal, []*domain.LedgerEntry, error) {
+	if s.journals == nil {
+		return nil, nil, domain.ErrNotImplemented
+	}
+	j, err := s.journals.Get(ctx, journalID)
+	if err != nil {
+		return nil, nil, err
+	}
+	entries, err := s.entries.ListByJournal(ctx, journalID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return j, entries, nil
+}
+
+func (s *AccountService) List(ctx context.Context, tenantID, assetCode string) ([]*domain.Account, error) {
+	return s.accs.ListByTenant(ctx, tenantID, assetCode)
 }

@@ -35,6 +35,11 @@ func (a *ACL) Check(req domain.CommandRequest) error {
 	if !a.Allow(req.SourceSystem, req.Command, req.AssetCode) {
 		return domain.ErrForbidden
 	}
+	if req.Command == domain.CmdExchange && req.ToAssetCode != "" {
+		if !a.Allow(req.SourceSystem, req.Command, req.ToAssetCode) {
+			return domain.ErrForbidden
+		}
+	}
 	return nil
 }
 

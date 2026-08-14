@@ -49,7 +49,16 @@ func (m *mem) Get(_ context.Context, tenant, code string) (*domain.Asset, error)
 	cp := *a
 	return &cp, nil
 }
-func (m *mem) List(_ context.Context, tenant string) ([]*domain.Asset, error) { return nil, nil }
+func (m *mem) List(_ context.Context, tenant string) ([]*domain.Asset, error) {
+	var out []*domain.Asset
+	for _, a := range m.assets {
+		if a.TenantID == tenant {
+			cp := *a
+			out = append(out, &cp)
+		}
+	}
+	return out, nil
+}
 
 type memAccount struct{ m *mem }
 
@@ -88,7 +97,18 @@ func (r memAccount) UpdateBalances(_ context.Context, a *domain.Account) error {
 	return nil
 }
 func (r memAccount) ListByTenant(_ context.Context, tenant, asset string) ([]*domain.Account, error) {
-	return nil, nil
+	var out []*domain.Account
+	for _, a := range r.m.accs {
+		if a.TenantID != tenant {
+			continue
+		}
+		if asset != "" && a.AssetCode != asset {
+			continue
+		}
+		cp := *a
+		out = append(out, &cp)
+	}
+	return out, nil
 }
 
 func (m *mem) CreateEntry(_ context.Context, e *domain.LedgerEntry) error {
@@ -188,6 +208,15 @@ func (r memEntry) ListByRange(ctx context.Context, t, s, a string, from, to time
 func (r memEntry) ListByAccount(ctx context.Context, id string) ([]*domain.LedgerEntry, error) {
 	return r.m.ListByAccount(ctx, id)
 }
+func (r memEntry) ListByJournal(_ context.Context, journalID string) ([]*domain.LedgerEntry, error) {
+	var out []*domain.LedgerEntry
+	for _, e := range r.m.entries {
+		if e.JournalID == journalID {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
 func (r memFreeze) Create(ctx context.Context, f *domain.FreezeOrder) error {
 	return r.m.CreateFreeze(ctx, f)
 }
@@ -222,7 +251,8 @@ func setupBooks(t *testing.T) (*Bookkeeping, *mem) {
 	acl := NewACL([]domain.ACLRule{
 		{SourceSystem: "campaign", Commands: []string{"Credit"}, Assets: []string{"POINT"}},
 		{SourceSystem: "order", Commands: []string{"Freeze", "Capture", "Release"}, Assets: []string{"POINT"}},
-		{SourceSystem: "wallet", Commands: []string{"Transfer", "Credit"}, Assets: []string{"POINT"}},
+		{SourceSystem: "wallet", Commands: []string{"Transfer", "Credit", "Exchange"}, Assets: []string{"POINT", "BALANCE_CNY", "BALANCE_USD"}},
+		{SourceSystem: "worker", Commands: []string{"Release", "Debit"}, Assets: []string{"*"}},
 	})
 	b := NewBookkeeping(memTx{}, st, memAccount{st}, memEntry{st}, memFreeze{st}, memIdem{st}, acl)
 	return b, st
@@ -322,5 +352,103 @@ func TestIdempotentCredit(t *testing.T) {
 	req.Amount = 9
 	if _, err := b.Execute(ctx, req); !domain.Is(err, domain.CodeIdempotencyConflict) {
 		t.Fatalf("want conflict, got %v", err)
+	}
+}
+
+func TestExchangeWithRateAndFee(t *testing.T) {
+	ctx := context.Background()
+	b, st := setupBooks(t)
+	_ = st.Save(ctx, &domain.Asset{
+		TenantID: "t_default", AssetCode: "BALANCE_CNY", Name: "人民币", Precision: 2, Status: domain.AssetActive,
+	})
+	_ = st.Save(ctx, &domain.Asset{
+		TenantID: "t_default", AssetCode: "BALANCE_USD", Name: "美元", Precision: 2, Status: domain.AssetActive,
+	})
+	holder := domain.Holder{Type: domain.HolderUser, ID: "u_fx"}
+	if _, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdCredit, TenantID: "t_default", SourceSystem: "wallet",
+		BizNo: "wallet:cny", Holder: holder, AssetCode: "BALANCE_CNY", Amount: 20000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdExchange, TenantID: "t_default", SourceSystem: "wallet",
+		BizNo: "wallet:fx:1", Holder: holder, AssetCode: "BALANCE_CNY", Amount: 10000,
+		ToAssetCode: "BALANCE_USD", ToAmount: 1400, FeeAsset: "BALANCE_CNY", FeeAmount: 10,
+		Fx: &domain.FxQuote{Rate: "0.14000000", BaseAsset: "BALANCE_CNY", QuoteAsset: "BALANCE_USD"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.JournalID == "" || res.ToAccount == nil || res.ToAccount.Available != "1400" {
+		t.Fatalf("exchange result %+v", res)
+	}
+	if res.Account.Available != "9990" {
+		t.Fatalf("cny after fx=%s", res.Account.Available)
+	}
+	var userIn, userOut, feeIn, clr bool
+	for _, e := range st.entries {
+		if e.JournalID != res.JournalID {
+			continue
+		}
+		if e.HolderType != domain.HolderSystemSubject && e.Direction == domain.DirOUT && e.AssetCode == "BALANCE_CNY" && e.Amount == 10000 {
+			userOut = true
+		}
+		if e.HolderType != domain.HolderSystemSubject && e.Direction == domain.DirIN && e.AssetCode == "BALANCE_USD" {
+			userIn = true
+		}
+		if e.HolderID == domain.SystemFxFee && e.Direction == domain.DirIN {
+			feeIn = true
+		}
+		if e.HolderID == domain.SystemFxClearing {
+			clr = true
+		}
+	}
+	if !userIn || !userOut || !feeIn || !clr {
+		t.Fatalf("incomplete journal entries userIn=%v userOut=%v feeIn=%v clr=%v", userIn, userOut, feeIn, clr)
+	}
+}
+
+func TestExchangeSlippageRejected(t *testing.T) {
+	ctx := context.Background()
+	b, st := setupBooks(t)
+	_ = st.Save(ctx, &domain.Asset{TenantID: "t_default", AssetCode: "BALANCE_CNY", Name: "人民币", Precision: 2, Status: domain.AssetActive})
+	_ = st.Save(ctx, &domain.Asset{TenantID: "t_default", AssetCode: "BALANCE_USD", Name: "美元", Precision: 2, Status: domain.AssetActive})
+	holder := domain.Holder{Type: domain.HolderUser, ID: "u_fx2"}
+	if _, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdCredit, TenantID: "t_default", SourceSystem: "wallet",
+		BizNo: "wallet:cny2", Holder: holder, AssetCode: "BALANCE_CNY", Amount: 20000,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdExchange, TenantID: "t_default", SourceSystem: "wallet",
+		BizNo: "wallet:fx:bad", Holder: holder, AssetCode: "BALANCE_CNY", Amount: 10000,
+		ToAssetCode: "BALANCE_USD", ToAmount: 2000,
+		Fx: &domain.FxQuote{Rate: "0.14000000"},
+	})
+	if !domain.Is(err, domain.CodeSlippage) {
+		t.Fatalf("want slippage, got %v", err)
+	}
+}
+
+func TestCrossShardTransferRejected(t *testing.T) {
+	ctx := context.Background()
+	b, _ := setupBooks(t)
+	b.UsePhase3(nil, nil, nil, nil, func(a, b string) bool { return a == b })
+	from := domain.Holder{Type: domain.HolderUser, ID: "u1"}
+	to := domain.Holder{Type: domain.HolderUser, ID: "u2"}
+	if _, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdCredit, TenantID: "t_default", SourceSystem: "wallet",
+		BizNo: "wallet:in2", Holder: from, AssetCode: "POINT", Amount: 30,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdTransfer, TenantID: "t_default", SourceSystem: "wallet",
+		BizNo: "wallet:tf-cross", Holder: from, ToHolder: &to, AssetCode: "POINT", Amount: 10,
+	})
+	if !domain.Is(err, domain.CodeCrossShard) {
+		t.Fatalf("want cross shard, got %v", err)
 	}
 }

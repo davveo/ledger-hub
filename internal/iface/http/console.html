@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Ledger Hub 运营台</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #0f1419; color: #e7ecf3; }
+    header { padding: 20px 28px; border-bottom: 1px solid #243044; display: flex; justify-content: space-between; align-items: baseline; }
+    h1 { margin: 0; font-size: 20px; }
+    main { padding: 20px 28px 48px; display: grid; gap: 18px; }
+    section { background: #161d27; border: 1px solid #243044; border-radius: 12px; padding: 16px 18px; }
+    h2 { margin: 0 0 12px; font-size: 15px; color: #9fb3c8; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #243044; }
+    input, button { background: #0f1419; color: inherit; border: 1px solid #3a4a60; border-radius: 8px; padding: 8px 10px; }
+    button { cursor: pointer; background: #1f6feb; border-color: #1f6feb; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .muted { color: #8b9bb0; font-size: 12px; }
+    pre { white-space: pre-wrap; font-size: 12px; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Ledger Hub 运营台</h1>
+  <span class="muted">租户 / 资产 / 汇率 / 账户 / 对账</span>
+</header>
+<main>
+  <section>
+    <h2>登记汇率</h2>
+    <div class="row">
+      <input id="base" placeholder="base 如 BALANCE_CNY"/>
+      <input id="quote" placeholder="quote 如 BALANCE_USD"/>
+      <input id="rate" placeholder="rate 如 0.14000000"/>
+      <button onclick="saveRate()">保存</button>
+    </div>
+    <div class="row">
+      <input id="reconDate" placeholder="对账日期 YYYY-MM-DD"/>
+      <button onclick="runRecon()">触发日终对账</button>
+    </div>
+    <pre id="msg" class="muted"></pre>
+  </section>
+  <section>
+    <h2>概览</h2>
+    <pre id="overview">加载中…</pre>
+  </section>
+  <section>
+    <h2>账户</h2>
+    <div id="accounts"></div>
+  </section>
+  <section>
+    <h2>汇率快照</h2>
+    <div id="rates"></div>
+  </section>
+</main>
+<script>
+async function load() {
+  const r = await fetch('/api/v1/ledger/console/overview');
+  const j = await r.json();
+  const d = j.data || {};
+  document.getElementById('overview').textContent = JSON.stringify({
+    tenant_id: d.tenant_id,
+    tenants: d.tenants,
+    assets: (d.assets||[]).map(a => a.AssetCode || a.asset_code),
+    limits: d.limits
+  }, null, 2);
+  document.getElementById('accounts').innerHTML = table(['account_id','holder_id','asset_code','available','frozen'], d.accounts || []);
+  document.getElementById('rates').innerHTML = table(['RateID','BaseAsset','QuoteAsset','Rate','QuotedAt'], d.fx_rates || []);
+}
+function table(cols, rows) {
+  if (!rows.length) return '<p class="muted">暂无数据</p>';
+  const head = cols.map(c => '<th>'+c+'</th>').join('');
+  const body = rows.map(row => '<tr>'+cols.map(c => {
+    const k = Object.keys(row).find(x => x.toLowerCase() === c.toLowerCase()) || c;
+    return '<td>'+ (row[k] ?? row[c] ?? '') +'</td>';
+  }).join('')+'</tr>').join('');
+  return '<table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table>';
+}
+async function saveRate() {
+  const body = {
+    base_asset: document.getElementById('base').value,
+    quote_asset: document.getElementById('quote').value,
+    rate: document.getElementById('rate').value,
+    rate_source: 'manual'
+  };
+  const r = await fetch('/api/v1/ledger/fx/rates', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+  document.getElementById('msg').textContent = await r.text();
+  load();
+}
+async function runRecon() {
+  const date = document.getElementById('reconDate').value;
+  const r = await fetch('/api/v1/ledger/reconcile/jobs', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({date})});
+  document.getElementById('msg').textContent = await r.text();
+}
+load();
+</script>
+</body>
+</html>

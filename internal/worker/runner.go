@@ -18,12 +18,18 @@ type Runner struct {
 	log     *zap.Logger
 	books   *application.Bookkeeping
 	recon   *application.ReconcileService
+	expire  *application.ExpireEngine
 	tenant  string
 	freezes domain.FreezeRepository
 }
 
 func New(cfg config.WorkerConfig, log *zap.Logger, books *application.Bookkeeping, recon *application.ReconcileService, freezes domain.FreezeRepository, tenant string) *Runner {
 	return &Runner{cfg: cfg, log: log, books: books, recon: recon, freezes: freezes, tenant: tenant}
+}
+
+func (r *Runner) WithExpire(e *application.ExpireEngine) *Runner {
+	r.expire = e
+	return r
 }
 
 func (r *Runner) Engine() *gin.Engine {
@@ -44,11 +50,17 @@ func (r *Runner) Start(ctx context.Context) {
 	if reconEvery <= 0 {
 		reconEvery = time.Hour
 	}
+	assetEvery := r.cfg.AssetExpireInterval
+	if assetEvery <= 0 {
+		assetEvery = 24 * time.Hour
+	}
 	expireTick := time.NewTicker(expireEvery)
 	reconTick := time.NewTicker(reconEvery)
+	assetTick := time.NewTicker(assetEvery)
 	go func() {
 		defer expireTick.Stop()
 		defer reconTick.Stop()
+		defer assetTick.Stop()
 		for {
 			select {
 			case <-ctx.Done():
@@ -57,6 +69,8 @@ func (r *Runner) Start(ctx context.Context) {
 				r.releaseExpired(ctx)
 			case <-reconTick.C:
 				r.runDailyReconcile(ctx)
+			case <-assetTick.C:
+				r.runAssetExpire(ctx)
 			}
 		}
 	}()
@@ -94,4 +108,18 @@ func (r *Runner) runDailyReconcile(ctx context.Context) {
 		return
 	}
 	r.log.Info("daily reconcile done", zap.String("job_id", rep.Job.JobID), zap.String("date", date))
+}
+
+func (r *Runner) runAssetExpire(ctx context.Context) {
+	if r.expire == nil {
+		return
+	}
+	n, err := r.expire.Run(ctx, r.tenant, time.Now().UTC())
+	if err != nil {
+		r.log.Warn("asset expire failed", zap.Error(err))
+		return
+	}
+	if n > 0 {
+		r.log.Info("asset expire posted", zap.Int("accounts", n))
+	}
 }

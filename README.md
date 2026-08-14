@@ -1,6 +1,6 @@
 # Ledger Hub · 通用账本中台
 
-> 状态：Phase 2 已落地（交易对接完备）  
+> 状态：Phase 3 已落地（多币种兑换与增强）  
 > 定位：面向任意交易相关系统的**虚拟资产账本中台**——提供统一开户、入账、出账、冻结、转账、多币种兑换、流水与对账能力；**不替代**订单、支付、库存、营销等业务系统。
 
 **Ledger Hub = 交易世界的「资产记账内核」；业务系统负责交易，账本负责把钱 / 分 / 币记清楚。**
@@ -38,7 +38,7 @@
 |----------|------|----------|------|
 | **Gateway** | `cmd/gateway` | `:8088` | 鉴权（HMAC 签名）、限流、审计、反向代理 |
 | **API** | `cmd/api` | `:8080` | 账本 HTTP 内核：资产 / 账户 / 记账命令 / 流水查询 |
-| **Worker** | `cmd/worker` | `:8089` | 超时冻结自动释放、日终 L2/L3 对账 |
+| **Worker** | `cmd/worker` | `:8089` | 超时冻结自动释放、积分过期、日终 L2/L3/L4 对账 |
 | **Connector** | `cmd/connector` | `:8090` | 订单/支付样板：业务事件 → 标准命令 |
 
 进程内分层（均可被单独抽成服务）：
@@ -184,7 +184,25 @@ curl -s 'http://127.0.0.1:8080/api/v1/ledger/accounts?holder_type=user&holder_id
 
 余额恒等式：`total = available + frozen`。
 
-**Transfer 禁止跨币种**；跨币种必须用 `Exchange`，以便保留汇率、双边金额并对账。
+**Transfer 禁止跨币种**；跨币种必须用 `Exchange`，以便保留汇率、双边金额并对账。跨 `holder_id` 分片的 Transfer 会返回 `42204`，需经系统科目轧差。
+
+兑换金额均为最小单位整数；`rate` 表示 `to_display ≈ from_display * rate`。账本校验 `|expected_to - to_amount| <= tolerance`，超出滑点返回 `42203`。`to.amount` 可省略，由账本按汇率计算。
+
+```json
+{
+  "source_system": "wallet",
+  "biz_type": "fx_convert",
+  "biz_no": "wallet:fx:F20260814001",
+  "holder": {"type": "user", "id": "u_123"},
+  "from": {"asset_code": "BALANCE_CNY", "amount": "10000"},
+  "to":   {"asset_code": "BALANCE_USD", "amount": "1400"},
+  "fx": {"rate": "0.14000000", "base_asset": "BALANCE_CNY", "quote_asset": "BALANCE_USD"},
+  "fee": {"asset_code": "BALANCE_CNY", "amount": "10"},
+  "tolerance": "0"
+}
+```
+
+同一 `journal_id` 下会写入：用户 from OUT、用户 to IN、手续费 OUT + `system_subject:fx_fee_income` IN、以及 `system_subject:fx_clearing` 轧差分录。
 
 ---
 
@@ -196,11 +214,13 @@ curl -s 'http://127.0.0.1:8080/api/v1/ledger/accounts?holder_type=user&holder_id
 ### 资产与账户
 
 ```http
-POST /api/v1/ledger/assets
+GET  /api/v1/ledger/assets
 GET  /api/v1/ledger/assets/{asset_code}
+POST /api/v1/ledger/assets
 POST /api/v1/ledger/accounts/open
 GET  /api/v1/ledger/accounts?holder_type=user&holder_id=u_1&asset_code=POINT
 GET  /api/v1/ledger/accounts/{account_id}
+GET  /api/v1/ledger/accounts?asset_code=POINT
 ```
 
 ### 流水 / 冻结 / 对账
@@ -208,15 +228,22 @@ GET  /api/v1/ledger/accounts/{account_id}
 ```http
 GET  /api/v1/ledger/entries?biz_no=order:O001
 GET  /api/v1/ledger/entries?holder_id=u_1&asset_code=POINT
+GET  /api/v1/ledger/journals/{id}
 GET  /api/v1/ledger/freezes/{freeze_id}
 GET  /api/v1/ledger/freezes?biz_no=order:O001
 POST /api/v1/ledger/reconcile/jobs
 GET  /api/v1/ledger/reconcile/jobs/{id}
 GET  /api/v1/ledger/reconcile/reports/{date}?source_system=order&asset_code=POINT
 POST /api/v1/ledger/reconcile/diffs/{id}/resolve
+POST /api/v1/ledger/fx/rates
+GET  /api/v1/ledger/fx/rates
+GET  /api/v1/ledger/fx/rates/{rate_id}
+POST /api/v1/ledger/tenants
+GET  /api/v1/ledger/tenants
+GET  /console
 ```
 
-对账任务可附带业务侧应记账清单（L1）；即使不传 `biz_lines`，也会跑 L2 余额勾稽与 L3 冻结勾稽。
+对账任务可附带业务侧应记账清单（L1）；即使不传 `biz_lines`，也会跑 L2 余额勾稽、L3 冻结勾稽与 L4 兑换完整性。
 
 ```json
 {
@@ -248,9 +275,11 @@ POST /api/v1/ledger/reconcile/diffs/{id}/resolve
 | 40901 | 幂等冲突但命令参数不一致 |
 | 42201 | 余额不足 |
 | 42202 | 冻结单状态不允许 Capture/Release |
+| 42203 | 兑换金额超出允许滑点 |
+| 42204 | 跨分片转账禁止直接 Transfer |
 | 42901 | 触发限额 |
 | 40301 | 无权对该资产执行该命令 |
-| 50101 | 能力尚未交付（如 Exchange） |
+| 50101 | 能力尚未交付 |
 
 ---
 
@@ -287,10 +316,13 @@ GORM AutoMigrate 创建以下表（金额一律 BIGINT 最小单位）：
 | `ledger_entry` | 单笔流水（真相来源），含变更后余额快照 |
 | `ledger_freeze` | 冻结单：frozen / captured / released |
 | `ledger_idempotency` | tenant + source + biz_no + command → 首次响应 |
-| `ledger_journal` | 复式凭证（Transfer 已写入 journal_id；兑换预留） |
-| `ledger_fx_rate` | 汇率快照（Phase 3） |
+| `ledger_journal` | 复式凭证（Transfer / Exchange） |
+| `ledger_fx_rate` | 汇率快照 |
+| `ledger_exchange_leg` | 兑换腿（from/to/fee/rate） |
+| `ledger_tenant` | 租户 |
+| `ledger_limit_usage` | 限额日累计 |
 | `ledger_reconcile_job` | 日终对账任务与汇总 |
-| `ledger_reconcile_diff` | 差异工单（多账/少账/金额/币种/勾稽） |
+| `ledger_reconcile_diff` | 差异工单（多账/少账/金额/币种/勾稽/兑换不完整） |
 
 样板资产：`POINT`、`BALANCE_CNY`、`BALANCE_USD`、`BALANCE_HKD`、`COIN`、`GROWTH`。
 
@@ -302,7 +334,7 @@ GORM AutoMigrate 创建以下表（金额一律 BIGINT 最小单位）：
 |------|------|------------|
 | **Phase 1 MVP** | 资产注册、懒开户、Credit/Debit、流水、幂等、鉴权 | 已落地 |
 | **Phase 2** | Freeze 三态、Transfer、权限矩阵、日终对账、样板接入 | 已落地 |
-| **Phase 3** | Exchange、汇率快照、Journal 增强、过期引擎、分库、运营台 | 表结构预留，命令返回 50101 |
+| **Phase 3** | Exchange、汇率快照、Journal 增强、过期引擎、分库、运营台 | 已落地 |
 
 ---
 
@@ -323,9 +355,15 @@ Gateway 写请求头：
 campaign  → Credit POINT
 order     → Freeze / Capture / Release  POINT、BALANCE_CNY
 pay       → Credit BALANCE_CNY
-wallet    → Credit / Debit / Freeze / Capture / Release / Transfer
-worker    → Release *
+wallet    → Credit / Debit / Freeze / Capture / Release / Transfer / Exchange
+worker    → Release / Debit / Transfer *
 ```
+
+运营台：浏览器打开 `http://127.0.0.1:8080/console`。
+
+分库：`mysql.shards` 配置额外 DSN；账户 / 流水 / 冻结 / 幂等按 `holder_id` 哈希路由。未配置时仍为单库。同 holder 的 Exchange 落在同一分片；跨 holder Transfer 若分片不同则拒绝（`42204`）。
+
+积分过期：在资产 `ext` 中配置，例如 `{"expire":{"policy":"year_end"}}` 或 `{"expire":{"policy":"rolling_days","days":365}}`。Worker 按 `asset_expire_interval` 扫描并以 `Debit`（`biz_type=expire`）扣减。
 
 ---
 

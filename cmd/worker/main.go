@@ -30,17 +30,26 @@ func main() {
 	}
 	defer zapLog.Sync()
 
-	db, err := persistence.Open(cfg.MySQL)
+	cluster, err := persistence.OpenCluster(cfg.MySQL)
 	if err != nil {
 		zapLog.Fatal("open mysql", zap.Error(err))
 	}
 
-	repos := persistence.NewRepos(db)
-	tx := persistence.NewTxManager(db)
+	if err := cluster.AutoMigrate(); err != nil {
+		zapLog.Fatal("auto migrate", zap.Error(err))
+	}
+
+	repos := persistence.NewClusterRepos(cluster)
+	tx := persistence.NewClusterTxManager(cluster)
 	acl := bootstrap.ACL(cfg.ACL)
-	books := application.NewBookkeeping(tx, repos.Asset, repos.Account, repos.Entry, repos.Freeze, repos.Idempotency, acl)
-	recon := application.NewReconcileService(repos.Entry, repos.Account, repos.Freeze, repos.Reconcile)
-	run := worker.New(cfg.Worker, zapLog, books, recon, repos.Freeze, cfg.App.DefaultTenant)
+	limitRules := bootstrap.Limits(cfg.Limits)
+	limiter := application.NewLimiter(limitRules, repos.Limit)
+	books := application.NewBookkeeping(tx, repos.Asset, repos.Account, repos.Entry, repos.Freeze, repos.Idempotency, acl).
+		UsePhase3(repos.Journal, repos.FxRate, repos.ExchangeLeg, limiter, cluster.SameShard)
+	recon := application.NewReconcileService(repos.Entry, repos.Account, repos.Freeze, repos.Reconcile).
+		UsePhase3(repos.ExchangeLeg, repos.Journal)
+	expire := application.NewExpireEngine(repos.Asset, repos.Account, repos.Entry, books)
+	run := worker.New(cfg.Worker, zapLog, books, recon, repos.Freeze, cfg.App.DefaultTenant).WithExpire(expire)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

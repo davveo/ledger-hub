@@ -13,6 +13,7 @@ http:
 
 mysql:
   dsn: "root:root@tcp(127.0.0.1:3306)/ledger_hub?charset=utf8mb4&parseTime=True&loc=Local"
+  shards: [] # 额外分片 DSN；空则单库。账户/流水/冻结/幂等按 holder_id 哈希
   max_idle_conns: 10
   max_open_conns: 50
   conn_max_lifetime: 30m
@@ -46,10 +47,10 @@ acl:
       commands: ["Credit"]
       assets: ["BALANCE_CNY"]
     - source_system: wallet
-      commands: ["Credit", "Debit", "Freeze", "Capture", "Release", "Transfer"]
+      commands: ["Credit", "Debit", "Freeze", "Capture", "Release", "Transfer", "Exchange"]
       assets: ["POINT", "BALANCE_CNY", "BALANCE_USD"]
     - source_system: worker
-      commands: ["Release"]
+      commands: ["Release", "Debit", "Transfer"]
       assets: ["*"]
 
 connector:
@@ -59,3 +60,13 @@ connector:
 worker:
   freeze_expire_interval: 30s
   reconcile_interval: 1h
+  asset_expire_interval: 24h
+
+limits:
+  rules:
+    - source_system: wallet
+      asset_code: "*"
+      command: Exchange
+      max_amount: 100000000
+      daily_amount: 1000000000
+      daily_count: 1000

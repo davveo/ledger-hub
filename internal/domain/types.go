@@ -143,8 +143,88 @@ type CommandRequest struct {
 	ToAssetCode  string
 	ToAmount     int64
 	ExpireAt     *time.Time
+	FeeAsset     string
+	FeeAmount    int64
+	Fx           *FxQuote
+	Tolerance    int64
 	Ext          map[string]interface{}
 }
+
+type FxQuote struct {
+	RateID     string
+	BaseAsset  string
+	QuoteAsset string
+	Rate       string
+	RateSource string
+	QuotedAt   time.Time
+}
+
+type FxRate struct {
+	RateID     string     `json:"rate_id"`
+	TenantID   string     `json:"tenant_id"`
+	BaseAsset  string     `json:"base_asset"`
+	QuoteAsset string     `json:"quote_asset"`
+	Rate       string     `json:"rate"`
+	RateSource string     `json:"rate_source"`
+	ValidFrom  *time.Time `json:"valid_from,omitempty"`
+	ValidTo    *time.Time `json:"valid_to,omitempty"`
+	QuotedAt   time.Time  `json:"quoted_at"`
+	CreatedBy  string     `json:"created_by,omitempty"`
+}
+
+type Journal struct {
+	JournalID    string `json:"journal_id"`
+	TenantID     string `json:"tenant_id"`
+	BizNo        string `json:"biz_no"`
+	JournalType  string `json:"journal_type"`
+	Status       string `json:"status"`
+	EntriesCount int    `json:"entries_count"`
+	FxRateID     string `json:"fx_rate_id,omitempty"`
+	Ext          string `json:"ext,omitempty"`
+}
+
+type ExchangeLeg struct {
+	ExchangeID string
+	JournalID  string
+	BizNo      string
+	TenantID   string
+	HolderType HolderType
+	HolderID   string
+	FromAsset  string
+	FromAmount int64
+	ToAsset    string
+	ToAmount   int64
+	FeeAsset   string
+	FeeAmount  int64
+	RateID     string
+	Rate       string
+	Status     string
+}
+
+type Tenant struct {
+	TenantID string `json:"tenant_id"`
+	Name     string `json:"name"`
+	Status   string `json:"status"`
+}
+
+type LimitRule struct {
+	SourceSystem string  `json:"source_system"`
+	AssetCode    string  `json:"asset_code"`
+	Command      Command `json:"command"`
+	MaxAmount    int64   `json:"max_amount"`
+	DailyAmount  int64   `json:"daily_amount"`
+	DailyCount   int     `json:"daily_count"`
+}
+
+const (
+	JournalTransfer = "transfer"
+	JournalExchange = "exchange"
+	JournalReverse  = "reverse"
+
+	SystemFxFee      = "fx_fee_income"
+	SystemFxClearing = "fx_clearing"
+	SystemPointSink  = "point_sink"
+)
 
 type ACLRule struct {
 	SourceSystem string
@@ -159,6 +239,7 @@ const (
 	DiffAssetMismatch  = "asset_mismatch"
 	DiffBalanceTieOut  = "balance_tie_out"
 	DiffFreezeTieOut   = "freeze_tie_out"
+	DiffFxIncomplete   = "fx_incomplete"
 
 	ReconJobRunning  = "running"
 	ReconJobDone     = "done"
@@ -196,6 +277,7 @@ type ReconcileSummary struct {
 	AssetMismatch   int    `json:"asset_mismatch"`
 	BalanceTieOut   int    `json:"balance_tie_out"`
 	FreezeTieOut    int    `json:"freeze_tie_out"`
+	FxIncomplete    int    `json:"fx_incomplete"`
 	InAmount        string `json:"in_amount"`
 	OutAmount       string `json:"out_amount"`
 }

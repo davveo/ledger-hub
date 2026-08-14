@@ -17,6 +17,7 @@ type Config struct {
 	ACL       ACLConfig       `mapstructure:"acl"`
 	Connector ConnectorConfig `mapstructure:"connector"`
 	Worker    WorkerConfig    `mapstructure:"worker"`
+	Limits    LimitConfig     `mapstructure:"limits"`
 }
 
 type AppConfig struct {
@@ -36,6 +37,7 @@ type HTTPConfig struct {
 
 type MySQLConfig struct {
 	DSN             string        `mapstructure:"dsn"`
+	Shards          []string      `mapstructure:"shards"`
 	MaxIdleConns    int           `mapstructure:"max_idle_conns"`
 	MaxOpenConns    int           `mapstructure:"max_open_conns"`
 	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
@@ -75,6 +77,20 @@ type ConnectorConfig struct {
 type WorkerConfig struct {
 	FreezeExpireInterval time.Duration `mapstructure:"freeze_expire_interval"`
 	ReconcileInterval    time.Duration `mapstructure:"reconcile_interval"`
+	AssetExpireInterval  time.Duration `mapstructure:"asset_expire_interval"`
+}
+
+type LimitConfig struct {
+	Rules []LimitRuleConfig `mapstructure:"rules"`
+}
+
+type LimitRuleConfig struct {
+	SourceSystem string `mapstructure:"source_system"`
+	AssetCode    string `mapstructure:"asset_code"`
+	Command      string `mapstructure:"command"`
+	MaxAmount    int64  `mapstructure:"max_amount"`
+	DailyAmount  int64  `mapstructure:"daily_amount"`
+	DailyCount   int    `mapstructure:"daily_count"`
 }
 
 func Load(path string) (*Config, error) {
