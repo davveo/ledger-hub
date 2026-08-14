@@ -46,6 +46,8 @@ func AutoMigrate(db *gorm.DB) error {
 		&LedgerIdempotency{},
 		&LedgerJournal{},
 		&LedgerFxRate{},
+		&LedgerReconcileJob{},
+		&LedgerReconcileDiff{},
 	)
 }
 
@@ -76,6 +78,7 @@ type Repos struct {
 	Entry       domain.EntryRepository
 	Freeze      domain.FreezeRepository
 	Idempotency domain.IdempotencyRepository
+	Reconcile   domain.ReconcileRepository
 }
 
 func NewRepos(db *gorm.DB) *Repos {
@@ -85,6 +88,7 @@ func NewRepos(db *gorm.DB) *Repos {
 		Entry:       NewEntryRepo(db),
 		Freeze:      NewFreezeRepo(db),
 		Idempotency: NewIdempotencyRepo(db),
+		Reconcile:   NewReconcileRepo(db),
 	}
 }
 

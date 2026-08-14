@@ -96,8 +96,8 @@ type LedgerEntry struct {
 	ID             uint64 `gorm:"primaryKey;autoIncrement"`
 	EntryID        string `gorm:"size:64;uniqueIndex;not null"`
 	AccountID      string `gorm:"size:64;index;not null"`
-	TenantID       string `gorm:"size:64;not null"`
-	AssetCode      string `gorm:"size:64;not null"`
+	TenantID       string    `gorm:"size:64;index:idx_entry_recon,priority:1;not null"`
+	AssetCode      string    `gorm:"size:64;index:idx_entry_recon,priority:3;not null"`
 	HolderType     string `gorm:"size:32;not null"`
 	HolderID       string `gorm:"size:64;not null"`
 	Direction      string `gorm:"size:8;not null"`
@@ -105,13 +105,13 @@ type LedgerEntry struct {
 	AvailableAfter int64  `gorm:"not null"`
 	FrozenAfter    int64  `gorm:"not null"`
 	Command        string `gorm:"size:32;not null"`
-	SourceSystem   string `gorm:"size:64;not null"`
+	SourceSystem   string    `gorm:"size:64;index:idx_entry_recon,priority:2;not null"`
 	BizType        string `gorm:"size:64"`
 	BizNo          string `gorm:"size:128;index;not null"`
 	JournalID      string `gorm:"size:64;index"`
 	FreezeID       string `gorm:"size:64;index"`
 	RelatedBizNo   string `gorm:"size:128"`
-	CreatedAt      time.Time `gorm:"index"`
+	CreatedAt      time.Time `gorm:"index:idx_entry_recon,priority:4;index"`
 }
 
 func (LedgerEntry) TableName() string { return "ledger_entry" }
@@ -234,3 +234,38 @@ type LedgerFxRate struct {
 }
 
 func (LedgerFxRate) TableName() string { return "ledger_fx_rate" }
+
+type LedgerReconcileJob struct {
+	ID           uint64 `gorm:"primaryKey;autoIncrement"`
+	JobID        string `gorm:"size:64;uniqueIndex;not null"`
+	TenantID     string `gorm:"size:64;index:idx_recon_latest,priority:1;not null"`
+	BizDate      string `gorm:"size:16;index:idx_recon_latest,priority:2;not null"`
+	SourceSystem string `gorm:"size:64;index:idx_recon_latest,priority:3"`
+	AssetCode    string `gorm:"size:64;index:idx_recon_latest,priority:4"`
+	Status       string `gorm:"size:16;not null"`
+	SummaryJSON  string `gorm:"type:text"`
+	Note         string `gorm:"type:text"`
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+func (LedgerReconcileJob) TableName() string { return "ledger_reconcile_job" }
+
+type LedgerReconcileDiff struct {
+	ID           uint64 `gorm:"primaryKey;autoIncrement"`
+	DiffID       string `gorm:"size:64;uniqueIndex;not null"`
+	JobID        string `gorm:"size:64;index;not null"`
+	Kind         string `gorm:"size:32;not null"`
+	BizNo        string `gorm:"size:128;index"`
+	Command      string `gorm:"size:32"`
+	AssetCode    string `gorm:"size:64"`
+	BizAmount    int64
+	LedgerAmount int64
+	AccountID    string `gorm:"size:64;index"`
+	Status       string `gorm:"size:16;index;not null"`
+	Note         string `gorm:"type:text"`
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+func (LedgerReconcileDiff) TableName() string { return "ledger_reconcile_diff" }

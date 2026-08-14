@@ -1,6 +1,6 @@
 # Ledger Hub · 通用账本中台
 
-> 状态：草案实现 v0.2（工程初始化）  
+> 状态：Phase 2 已落地（交易对接完备）  
 > 定位：面向任意交易相关系统的**虚拟资产账本中台**——提供统一开户、入账、出账、冻结、转账、多币种兑换、流水与对账能力；**不替代**订单、支付、库存、营销等业务系统。
 
 **Ledger Hub = 交易世界的「资产记账内核」；业务系统负责交易，账本负责把钱 / 分 / 币记清楚。**
@@ -38,7 +38,8 @@
 |----------|------|----------|------|
 | **Gateway** | `cmd/gateway` | `:8088` | 鉴权（HMAC 签名）、限流、审计、反向代理 |
 | **API** | `cmd/api` | `:8080` | 账本 HTTP 内核：资产 / 账户 / 记账命令 / 流水查询 |
-| **Worker** | `cmd/worker` | `:8089` | 超时冻结自动释放、日终对账任务（Phase 2 起完善） |
+| **Worker** | `cmd/worker` | `:8089` | 超时冻结自动释放、日终 L2/L3 对账 |
+| **Connector** | `cmd/connector` | `:8090` | 订单/支付样板：业务事件 → 标准命令 |
 
 进程内分层（均可被单独抽成服务）：
 
@@ -81,7 +82,8 @@ ledger-hub/
 ├── cmd/
 │   ├── api/                 # 账本 HTTP 服务
 │   ├── gateway/             # API 网关
-│   └── worker/              # 异步任务
+│   ├── worker/              # 异步任务
+│   └── connector/           # 订单/支付样板接入
 ├── configs/config.yaml
 ├── deployments/docker-compose.yaml
 ├── docs/architecture.html
@@ -113,7 +115,7 @@ ledger-hub/
 ```bash
 make docker-up          # MySQL 8，库名 ledger_hub，root/root
 make tidy
-make api                # 另开终端：make gateway / make worker
+make api                # 另开终端：make gateway / make worker / make connector
 ```
 
 或一次编译：
@@ -131,6 +133,7 @@ make build
 curl http://127.0.0.1:8080/healthz
 curl http://127.0.0.1:8088/healthz
 curl http://127.0.0.1:8089/healthz
+curl http://127.0.0.1:8090/healthz
 ```
 
 开发环境可直连 `:8080`；生产流量走 Gateway `:8088`（写请求需签名）。
@@ -209,7 +212,28 @@ GET  /api/v1/ledger/freezes/{freeze_id}
 GET  /api/v1/ledger/freezes?biz_no=order:O001
 POST /api/v1/ledger/reconcile/jobs
 GET  /api/v1/ledger/reconcile/jobs/{id}
-GET  /api/v1/ledger/reconcile/reports/{date}?source_system=order
+GET  /api/v1/ledger/reconcile/reports/{date}?source_system=order&asset_code=POINT
+POST /api/v1/ledger/reconcile/diffs/{id}/resolve
+```
+
+对账任务可附带业务侧应记账清单（L1）；即使不传 `biz_lines`，也会跑 L2 余额勾稽与 L3 冻结勾稽。
+
+```json
+{
+  "date": "2026-08-14",
+  "source_system": "order",
+  "asset_code": "POINT",
+  "biz_lines": [
+    {"biz_no": "order:freeze:O1", "command": "Freeze", "asset_code": "POINT", "amount": "50"}
+  ]
+}
+```
+
+差异工单只记录差异，**补账/冲正一律再走记账命令**，禁止直接改余额。关闭工单：
+
+```http
+POST /api/v1/ledger/reconcile/diffs/{id}/resolve
+{"note": "已补 Capture"}
 ```
 
 成功响应：`{"code":0,"data":{...}}`。幂等重放时 `idempotent_replay=true`，返回首次结果。
@@ -225,6 +249,7 @@ GET  /api/v1/ledger/reconcile/reports/{date}?source_system=order
 | 42201 | 余额不足 |
 | 42202 | 冻结单状态不允许 Capture/Release |
 | 42901 | 触发限额 |
+| 40301 | 无权对该资产执行该命令 |
 | 50101 | 能力尚未交付（如 Exchange） |
 
 ---
@@ -262,8 +287,10 @@ GORM AutoMigrate 创建以下表（金额一律 BIGINT 最小单位）：
 | `ledger_entry` | 单笔流水（真相来源），含变更后余额快照 |
 | `ledger_freeze` | 冻结单：frozen / captured / released |
 | `ledger_idempotency` | tenant + source + biz_no + command → 首次响应 |
-| `ledger_journal` | 复式凭证（兑换 / 转账预留） |
+| `ledger_journal` | 复式凭证（Transfer 已写入 journal_id；兑换预留） |
 | `ledger_fx_rate` | 汇率快照（Phase 3） |
+| `ledger_reconcile_job` | 日终对账任务与汇总 |
+| `ledger_reconcile_diff` | 差异工单（多账/少账/金额/币种/勾稽） |
 
 样板资产：`POINT`、`BALANCE_CNY`、`BALANCE_USD`、`BALANCE_HKD`、`COIN`、`GROWTH`。
 
@@ -274,8 +301,8 @@ GORM AutoMigrate 创建以下表（金额一律 BIGINT 最小单位）：
 | 阶段 | 范围 | 本仓库现状 |
 |------|------|------------|
 | **Phase 1 MVP** | 资产注册、懒开户、Credit/Debit、流水、幂等、鉴权 | 已落地 |
-| **Phase 2** | Freeze 三态、Transfer、权限矩阵、日终对账、样板接入 | 冻结/转账内核已实现；对账报表占位 |
-| **Phase 3** | Exchange、汇率快照、Journal、过期引擎、分库、运营台 | 表结构预留，命令返回 50101 |
+| **Phase 2** | Freeze 三态、Transfer、权限矩阵、日终对账、样板接入 | 已落地 |
+| **Phase 3** | Exchange、汇率快照、Journal 增强、过期引擎、分库、运营台 | 表结构预留，命令返回 50101 |
 
 ---
 
@@ -288,10 +315,52 @@ Gateway 写请求头：
 - `X-Client-Id`
 - `X-Timestamp`（unix 秒）
 - `X-Signature` = `HMAC-SHA256(secret, client_id + timestamp + body)` hex
+- 写请求 `source_system` 必须与 `X-Client-Id` 一致
+
+权限矩阵（`configs/config.yaml` → `acl.rules`，记账内核强制校验）：
+
+```text
+campaign  → Credit POINT
+order     → Freeze / Capture / Release  POINT、BALANCE_CNY
+pay       → Credit BALANCE_CNY
+wallet    → Credit / Debit / Freeze / Capture / Release / Transfer
+worker    → Release *
+```
 
 ---
 
-## 11. 安全与对账要点
+## 11. 订单 / 支付样板接入
+
+独立进程 `cmd/connector`（默认 `:8090`），把业务事件翻译成标准命令，经 Gateway 调账本。
+
+```bash
+# 下单锁积分
+curl -s -X POST http://127.0.0.1:8090/connector/order/events \
+  -H 'Content-Type: application/json' \
+  -d '{"event":"created","order_id":"O20260814001","user_id":"u_123","asset_code":"POINT","amount":"50"}'
+
+# 支付成功确认预占
+curl -s -X POST http://127.0.0.1:8090/connector/order/events \
+  -H 'Content-Type: application/json' \
+  -d '{"event":"paid","order_id":"O20260814001","user_id":"u_123"}'
+
+# 取消释放
+curl -s -X POST http://127.0.0.1:8090/connector/order/events \
+  -H 'Content-Type: application/json' \
+  -d '{"event":"cancelled","order_id":"O20260814002","user_id":"u_123"}'
+
+# 支付到账入余额
+curl -s -X POST http://127.0.0.1:8090/connector/pay/events \
+  -H 'Content-Type: application/json' \
+  -d '{"event":"paid","pay_id":"P988331","user_id":"u_123","asset_code":"BALANCE_CNY","amount":"10000"}'
+```
+
+订单事件映射：`created→Freeze`、`paid→Capture`、`cancelled→Release`。  
+支付事件映射：`paid→Credit(biz_no=pay:credit:{pay_id})`。
+
+---
+
+## 12. 安全与对账要点
 
 - 真资金 / 可兑换余额：**不要**只做 Redis 加减
 - 补账或冲正一律走命令，禁止直接改余额字段

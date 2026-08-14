@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/davveo/ledger-hub/internal/application"
+	"github.com/davveo/ledger-hub/internal/bootstrap"
 	"github.com/davveo/ledger-hub/internal/config"
 	httpserver "github.com/davveo/ledger-hub/internal/iface/http"
 	"github.com/davveo/ledger-hub/internal/infrastructure/logger"
@@ -36,8 +37,10 @@ func main() {
 
 	repos := persistence.NewRepos(db)
 	tx := persistence.NewTxManager(db)
-	books := application.NewBookkeeping(tx, repos.Asset, repos.Account, repos.Entry, repos.Freeze, repos.Idempotency)
-	run := worker.New(cfg.Worker, zapLog, books, repos.Freeze, cfg.App.DefaultTenant)
+	acl := bootstrap.ACL(cfg.ACL)
+	books := application.NewBookkeeping(tx, repos.Asset, repos.Account, repos.Entry, repos.Freeze, repos.Idempotency, acl)
+	recon := application.NewReconcileService(repos.Entry, repos.Account, repos.Freeze, repos.Reconcile)
+	run := worker.New(cfg.Worker, zapLog, books, recon, repos.Freeze, cfg.App.DefaultTenant)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

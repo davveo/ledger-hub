@@ -34,6 +34,28 @@ gateway:
     - client_id: wallet
       secret: "dev-secret-wallet"
 
+acl:
+  rules:
+    - source_system: campaign
+      commands: ["Credit"]
+      assets: ["POINT"]
+    - source_system: order
+      commands: ["Freeze", "Capture", "Release"]
+      assets: ["POINT", "BALANCE_CNY"]
+    - source_system: pay
+      commands: ["Credit"]
+      assets: ["BALANCE_CNY"]
+    - source_system: wallet
+      commands: ["Credit", "Debit", "Freeze", "Capture", "Release", "Transfer"]
+      assets: ["POINT", "BALANCE_CNY", "BALANCE_USD"]
+    - source_system: worker
+      commands: ["Release"]
+      assets: ["*"]
+
+connector:
+  addr: ":8090"
+  ledger_base_url: "http://127.0.0.1:8088"
+
 worker:
   freeze_expire_interval: 30s
   reconcile_interval: 1h

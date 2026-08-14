@@ -142,7 +142,76 @@ type CommandRequest struct {
 	ToHolder     *Holder
 	ToAssetCode  string
 	ToAmount     int64
+	ExpireAt     *time.Time
 	Ext          map[string]interface{}
+}
+
+type ACLRule struct {
+	SourceSystem string
+	Commands     []string
+	Assets       []string
+}
+
+const (
+	DiffExtra          = "extra"
+	DiffMissing        = "missing"
+	DiffAmountMismatch = "amount_mismatch"
+	DiffAssetMismatch  = "asset_mismatch"
+	DiffBalanceTieOut  = "balance_tie_out"
+	DiffFreezeTieOut   = "freeze_tie_out"
+
+	ReconJobRunning  = "running"
+	ReconJobDone     = "done"
+	ReconJobFailed   = "failed"
+	DiffStatusOpen     = "open"
+	DiffStatusResolved = "resolved"
+)
+
+type BizLine struct {
+	BizNo     string
+	Command   Command
+	AssetCode string
+	Amount    int64
+}
+
+type ReconcileJob struct {
+	JobID        string
+	TenantID     string
+	Date         string
+	SourceSystem string
+	AssetCode    string
+	Status       string
+	Summary      *ReconcileSummary
+	Note         string
+	CreatedAt    time.Time
+}
+
+type ReconcileSummary struct {
+	LedgerCount     int    `json:"ledger_count"`
+	BizCount        int    `json:"biz_count"`
+	Matched         int    `json:"matched"`
+	Extra           int    `json:"extra"`
+	Missing         int    `json:"missing"`
+	AmountMismatch  int    `json:"amount_mismatch"`
+	AssetMismatch   int    `json:"asset_mismatch"`
+	BalanceTieOut   int    `json:"balance_tie_out"`
+	FreezeTieOut    int    `json:"freeze_tie_out"`
+	InAmount        string `json:"in_amount"`
+	OutAmount       string `json:"out_amount"`
+}
+
+type ReconcileDiff struct {
+	DiffID       string
+	JobID        string
+	Kind         string
+	BizNo        string
+	Command      Command
+	AssetCode    string
+	BizAmount    int64
+	LedgerAmount int64
+	AccountID    string
+	Status       string
+	Note         string
 }
 
 type CommandResult struct {

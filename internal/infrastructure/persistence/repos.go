@@ -126,6 +126,22 @@ func (r *AccountRepo) UpdateBalances(ctx context.Context, a *domain.Account) err
 	return nil
 }
 
+func (r *AccountRepo) ListByTenant(ctx context.Context, tenantID, assetCode string) ([]*domain.Account, error) {
+	q := dbFrom(ctx, r.db).Where("tenant_id = ?", tenantID)
+	if assetCode != "" {
+		q = q.Where("asset_code = ?", assetCode)
+	}
+	var rows []LedgerAccount
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]*domain.Account, 0, len(rows))
+	for i := range rows {
+		out = append(out, rows[i].toDomain())
+	}
+	return out, nil
+}
+
 type EntryRepo struct{ db *gorm.DB }
 
 func NewEntryRepo(db *gorm.DB) *EntryRepo { return &EntryRepo{db: db} }
@@ -155,6 +171,29 @@ func (r *EntryRepo) ListByHolder(ctx context.Context, tenantID string, holder do
 	}
 	var rows []LedgerEntry
 	if err := q.Order("id desc").Limit(200).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return entriesToDomain(rows), nil
+}
+
+func (r *EntryRepo) ListByRange(ctx context.Context, tenantID, sourceSystem, assetCode string, from, to time.Time) ([]*domain.LedgerEntry, error) {
+	q := dbFrom(ctx, r.db).Where("tenant_id = ? AND created_at >= ? AND created_at < ?", tenantID, from, to)
+	if sourceSystem != "" {
+		q = q.Where("source_system = ?", sourceSystem)
+	}
+	if assetCode != "" {
+		q = q.Where("asset_code = ?", assetCode)
+	}
+	var rows []LedgerEntry
+	if err := q.Order("id asc").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return entriesToDomain(rows), nil
+}
+
+func (r *EntryRepo) ListByAccount(ctx context.Context, accountID string) ([]*domain.LedgerEntry, error) {
+	var rows []LedgerEntry
+	if err := dbFrom(ctx, r.db).Where("account_id = ?", accountID).Order("id asc").Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	return entriesToDomain(rows), nil
@@ -229,6 +268,22 @@ func (r *FreezeRepo) ListExpired(ctx context.Context, now time.Time, limit int) 
 	if limit > 0 {
 		q = q.Limit(limit)
 	}
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]*domain.FreezeOrder, 0, len(rows))
+	for i := range rows {
+		out = append(out, rows[i].toDomain())
+	}
+	return out, nil
+}
+
+func (r *FreezeRepo) ListFrozen(ctx context.Context, tenantID, assetCode string) ([]*domain.FreezeOrder, error) {
+	q := dbFrom(ctx, r.db).Where("tenant_id = ? AND status = ?", tenantID, domain.FreezeFrozen)
+	if assetCode != "" {
+		q = q.Where("asset_code = ?", assetCode)
+	}
+	var rows []LedgerFreeze
 	if err := q.Find(&rows).Error; err != nil {
 		return nil, err
 	}

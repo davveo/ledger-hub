@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"crypto/hmac"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httputil"
@@ -77,6 +78,13 @@ func (s *Server) auth() gin.HandlerFunc {
 			return
 		}
 		c.Set("client_id", clientID)
+		var peek struct {
+			SourceSystem string `json:"source_system"`
+		}
+		if json.Unmarshal(body, &peek) == nil && peek.SourceSystem != "" && peek.SourceSystem != clientID {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": domain.CodeForbidden, "message": "source_system 必须与 client_id 一致"})
+			return
+		}
 		c.Next()
 	}
 }

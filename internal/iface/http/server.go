@@ -56,6 +56,7 @@ func (s *Server) Engine() *gin.Engine {
 		g.POST("/reconcile/jobs", s.triggerReconcile)
 		g.GET("/reconcile/jobs/:id", s.getReconcileJob)
 		g.GET("/reconcile/reports/:date", s.getReconcileReport)
+		g.POST("/reconcile/diffs/:id/resolve", s.resolveDiff)
 	}
 	return r
 }
@@ -76,6 +77,8 @@ func fail(c *gin.Context, err error) {
 		switch de.Code {
 		case domain.CodeNotFound:
 			status = http.StatusNotFound
+		case domain.CodeForbidden:
+			status = http.StatusForbidden
 		case domain.CodeIdempotencyConflict:
 			status = http.StatusConflict
 		case domain.CodeInsufficient, domain.CodeFreezeStateInvalid:
@@ -108,6 +111,7 @@ type commandDTO struct {
 	ToHolder     *domain.Holder         `json:"to_holder"`
 	To           *amountAsset           `json:"to"`
 	From         *amountAsset           `json:"from"`
+	ExpireAt     string                 `json:"expire_at"`
 	Ext          map[string]interface{} `json:"ext"`
 }
 
@@ -179,6 +183,14 @@ func (s *Server) handleCommand(c *gin.Context, forced domain.Command) {
 		ToAssetCode:  toAsset,
 		ToAmount:     toAmount,
 		Ext:          dto.Ext,
+	}
+	if dto.ExpireAt != "" {
+		t, err := time.Parse(time.RFC3339, dto.ExpireAt)
+		if err != nil {
+			fail(c, domain.NewError(domain.CodeInvalidParam, "expire_at 需为 RFC3339"))
+			return
+		}
+		req.ExpireAt = &t
 	}
 	res, err := s.books.Execute(c.Request.Context(), req)
 	if err != nil {
@@ -338,28 +350,67 @@ func (s *Server) triggerReconcile(c *gin.Context) {
 		Date         string `json:"date"`
 		SourceSystem string `json:"source_system"`
 		AssetCode    string `json:"asset_code"`
+		BizLines     []struct {
+			BizNo     string `json:"biz_no"`
+			Command   string `json:"command"`
+			AssetCode string `json:"asset_code"`
+			Amount    string `json:"amount"`
+		} `json:"biz_lines"`
 	}
-	_ = c.ShouldBindJSON(&body)
-	job, err := s.recon.Trigger(c.Request.Context(), body.Date, body.SourceSystem, body.AssetCode)
+	if err := c.ShouldBindJSON(&body); err != nil {
+		fail(c, domain.NewError(domain.CodeInvalidParam, err.Error()))
+		return
+	}
+	lines := make([]domain.BizLine, 0, len(body.BizLines))
+	for _, l := range body.BizLines {
+		amt, err := parseAmount(l.Amount)
+		if err != nil {
+			fail(c, domain.ErrInvalidParam)
+			return
+		}
+		lines = append(lines, domain.BizLine{
+			BizNo:     l.BizNo,
+			Command:   domain.Command(l.Command),
+			AssetCode: l.AssetCode,
+			Amount:    amt,
+		})
+	}
+	rep, err := s.recon.Trigger(c.Request.Context(), s.tenantID(c, ""), body.Date, body.SourceSystem, body.AssetCode, lines)
 	if err != nil {
 		fail(c, err)
 		return
 	}
-	ok(c, job)
+	ok(c, rep)
 }
 
 func (s *Server) getReconcileJob(c *gin.Context) {
-	ok(c, gin.H{"id": c.Param("id"), "status": "accepted", "note": "Phase 2"})
+	rep, err := s.recon.GetJob(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, rep)
 }
 
 func (s *Server) getReconcileReport(c *gin.Context) {
-	ok(c, gin.H{
-		"date":          c.Param("date"),
-		"source_system": c.Query("source_system"),
-		"asset_code":    c.Query("asset_code"),
-		"status":        "not_ready",
-		"note":          "Phase 2 日终对账报表",
-	})
+	rep, err := s.recon.ReportByDate(c.Request.Context(), s.tenantID(c, ""), c.Param("date"), c.Query("source_system"), c.Query("asset_code"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, rep)
+}
+
+func (s *Server) resolveDiff(c *gin.Context) {
+	var body struct {
+		Note string `json:"note"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	if err := s.recon.ResolveDiff(c.Request.Context(), c.Param("id"), body.Note); err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, gin.H{"diff_id": c.Param("id"), "status": domain.DiffStatusResolved})
 }
 
 func accountView(acc *domain.Account) gin.H {

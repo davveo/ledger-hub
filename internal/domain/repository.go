@@ -21,12 +21,15 @@ type AccountRepository interface {
 	GetForUpdate(ctx context.Context, tenantID string, holder Holder, assetCode string) (*Account, error)
 	Create(ctx context.Context, a *Account) error
 	UpdateBalances(ctx context.Context, a *Account) error
+	ListByTenant(ctx context.Context, tenantID, assetCode string) ([]*Account, error)
 }
 
 type EntryRepository interface {
 	Create(ctx context.Context, e *LedgerEntry) error
 	ListByBizNo(ctx context.Context, tenantID, bizNo string) ([]*LedgerEntry, error)
 	ListByHolder(ctx context.Context, tenantID string, holder Holder, assetCode string, from, to *time.Time) ([]*LedgerEntry, error)
+	ListByRange(ctx context.Context, tenantID, sourceSystem, assetCode string, from, to time.Time) ([]*LedgerEntry, error)
+	ListByAccount(ctx context.Context, accountID string) ([]*LedgerEntry, error)
 }
 
 type FreezeRepository interface {
@@ -35,6 +38,17 @@ type FreezeRepository interface {
 	GetByBizNo(ctx context.Context, tenantID, bizNo string) (*FreezeOrder, error)
 	UpdateStatus(ctx context.Context, freezeID string, from, to FreezeStatus) error
 	ListExpired(ctx context.Context, now time.Time, limit int) ([]*FreezeOrder, error)
+	ListFrozen(ctx context.Context, tenantID, assetCode string) ([]*FreezeOrder, error)
+}
+
+type ReconcileRepository interface {
+	CreateJob(ctx context.Context, job *ReconcileJob) error
+	UpdateJob(ctx context.Context, job *ReconcileJob) error
+	GetJob(ctx context.Context, jobID string) (*ReconcileJob, error)
+	LatestJob(ctx context.Context, tenantID, date, sourceSystem, assetCode string) (*ReconcileJob, error)
+	CreateDiffs(ctx context.Context, diffs []*ReconcileDiff) error
+	ListDiffs(ctx context.Context, jobID string) ([]*ReconcileDiff, error)
+	ResolveDiff(ctx context.Context, diffID, note string) error
 }
 
 type IdempotencyRepository interface {

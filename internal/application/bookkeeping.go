@@ -13,12 +13,13 @@ import (
 )
 
 type Bookkeeping struct {
-	tx     domain.TxManager
-	assets domain.AssetRepository
-	accs   domain.AccountRepository
+	tx      domain.TxManager
+	assets  domain.AssetRepository
+	accs    domain.AccountRepository
 	entries domain.EntryRepository
 	freezes domain.FreezeRepository
 	idem    domain.IdempotencyRepository
+	acl     *ACL
 }
 
 func NewBookkeeping(
@@ -28,13 +29,19 @@ func NewBookkeeping(
 	entries domain.EntryRepository,
 	freezes domain.FreezeRepository,
 	idem domain.IdempotencyRepository,
+	acl *ACL,
 ) *Bookkeeping {
-	return &Bookkeeping{tx: tx, assets: assets, accs: accs, entries: entries, freezes: freezes, idem: idem}
+	return &Bookkeeping{tx: tx, assets: assets, accs: accs, entries: entries, freezes: freezes, idem: idem, acl: acl}
 }
 
 func (s *Bookkeeping) Execute(ctx context.Context, req domain.CommandRequest) (*domain.CommandResult, error) {
 	if err := validateBase(req); err != nil {
 		return nil, err
+	}
+	if req.Command != domain.CmdCapture && req.Command != domain.CmdRelease {
+		if err := s.acl.Check(req); err != nil {
+			return nil, err
+		}
 	}
 	switch req.Command {
 	case domain.CmdCredit:
@@ -105,7 +112,7 @@ func applyCredit(ctx context.Context, s *Bookkeeping, req domain.CommandRequest,
 	if err := s.accs.UpdateBalances(ctx, acc); err != nil {
 		return nil, err
 	}
-	entry, err := s.writeEntry(ctx, req, acc, domain.DirIN, req.Amount, "")
+	entry, err := s.writeEntry(ctx, req, acc, domain.DirIN, req.Amount, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -123,7 +130,7 @@ func applyDebit(ctx context.Context, s *Bookkeeping, req domain.CommandRequest, 
 	if err := s.accs.UpdateBalances(ctx, acc); err != nil {
 		return nil, err
 	}
-	entry, err := s.writeEntry(ctx, req, acc, domain.DirOUT, req.Amount, "")
+	entry, err := s.writeEntry(ctx, req, acc, domain.DirOUT, req.Amount, "", "")
 	if err != nil {
 		return nil, err
 	}
@@ -153,11 +160,12 @@ func applyFreeze(ctx context.Context, s *Bookkeeping, req domain.CommandRequest,
 		AssetCode: acc.AssetCode,
 		Amount:    req.Amount,
 		Status:    domain.FreezeFrozen,
+		ExpireAt:  req.ExpireAt,
 	}
 	if err := s.freezes.Create(ctx, fz); err != nil {
 		return nil, err
 	}
-	entry, err := s.writeEntry(ctx, req, acc, domain.DirOUT, req.Amount, fz.FreezeID)
+	entry, err := s.writeEntry(ctx, req, acc, domain.DirOUT, req.Amount, fz.FreezeID, "")
 	if err != nil {
 		return nil, err
 	}
@@ -179,10 +187,16 @@ func (s *Bookkeeping) captureOrRelease(ctx context.Context, req domain.CommandRe
 		var fz *domain.FreezeOrder
 		if req.FreezeID != "" {
 			fz, err = s.freezes.GetByID(ctx, req.FreezeID)
+		} else if req.RelatedBizNo != "" {
+			fz, err = s.freezes.GetByBizNo(ctx, req.TenantID, req.RelatedBizNo)
 		} else {
 			fz, err = s.freezes.GetByBizNo(ctx, req.TenantID, req.BizNo)
 		}
 		if err != nil {
+			return err
+		}
+		req.AssetCode = fz.AssetCode
+		if err := s.acl.Check(req); err != nil {
 			return err
 		}
 		if fz.Status != domain.FreezeFrozen {
@@ -216,7 +230,7 @@ func (s *Bookkeeping) captureOrRelease(ctx context.Context, req domain.CommandRe
 		req.AssetCode = locked.AssetCode
 		req.Holder = domain.Holder{Type: locked.HolderType, ID: locked.HolderID}
 		req.Amount = fz.Amount
-		entry, err := s.writeEntry(ctx, req, locked, dir, fz.Amount, fz.FreezeID)
+		entry, err := s.writeEntry(ctx, req, locked, dir, fz.Amount, fz.FreezeID, "")
 		if err != nil {
 			return err
 		}
@@ -289,15 +303,16 @@ func (s *Bookkeeping) transfer(ctx context.Context, req domain.CommandRequest) (
 		if err := s.accs.UpdateBalances(ctx, toAcc); err != nil {
 			return err
 		}
-		e1, err := s.writeEntry(ctx, req, fromAcc, domain.DirOUT, req.Amount, "")
+		journalID := idgen.New("jnl_")
+		e1, err := s.writeEntry(ctx, req, fromAcc, domain.DirOUT, req.Amount, "", journalID)
 		if err != nil {
 			return err
 		}
-		e2, err := s.writeEntry(ctx, req, toAcc, domain.DirIN, req.Amount, "")
+		e2, err := s.writeEntry(ctx, req, toAcc, domain.DirIN, req.Amount, "", journalID)
 		if err != nil {
 			return err
 		}
-		res := newResult(fromAcc, []string{e1.EntryID, e2.EntryID}, "", "")
+		res := newResult(fromAcc, []string{e1.EntryID, e2.EntryID}, "", journalID)
 		res.ToAccount = toBalance(toAcc)
 		if err := s.saveIdempotency(ctx, req, hash, res); err != nil {
 			return err
@@ -331,7 +346,7 @@ func (s *Bookkeeping) getOrOpenLocked(ctx context.Context, tenantID string, hold
 	return s.accs.GetForUpdate(ctx, tenantID, holder, assetCode)
 }
 
-func (s *Bookkeeping) writeEntry(ctx context.Context, req domain.CommandRequest, acc *domain.Account, dir domain.Direction, amount int64, freezeID string) (*domain.LedgerEntry, error) {
+func (s *Bookkeeping) writeEntry(ctx context.Context, req domain.CommandRequest, acc *domain.Account, dir domain.Direction, amount int64, freezeID, journalID string) (*domain.LedgerEntry, error) {
 	e := &domain.LedgerEntry{
 		EntryID:        idgen.New("le_"),
 		AccountID:      acc.AccountID,
@@ -347,6 +362,7 @@ func (s *Bookkeeping) writeEntry(ctx context.Context, req domain.CommandRequest,
 		SourceSystem:   req.SourceSystem,
 		BizType:        req.BizType,
 		BizNo:          req.BizNo,
+		JournalID:      journalID,
 		FreezeID:       freezeID,
 		RelatedBizNo:   req.RelatedBizNo,
 	}

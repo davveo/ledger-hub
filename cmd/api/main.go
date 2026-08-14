@@ -7,6 +7,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/davveo/ledger-hub/internal/application"
+	"github.com/davveo/ledger-hub/internal/bootstrap"
 	"github.com/davveo/ledger-hub/internal/config"
 	httpserver "github.com/davveo/ledger-hub/internal/iface/http"
 	"github.com/davveo/ledger-hub/internal/infrastructure/logger"
@@ -34,11 +35,12 @@ func main() {
 
 	repos := persistence.NewRepos(db)
 	tx := persistence.NewTxManager(db)
+	acl := bootstrap.ACL(cfg.ACL)
 	assetSvc := application.NewAssetService(repos.Asset)
 	accountSvc := application.NewAccountService(repos.Asset, repos.Account)
-	books := application.NewBookkeeping(tx, repos.Asset, repos.Account, repos.Entry, repos.Freeze, repos.Idempotency)
+	books := application.NewBookkeeping(tx, repos.Asset, repos.Account, repos.Entry, repos.Freeze, repos.Idempotency, acl)
 	query := application.NewQueryService(repos.Entry, repos.Freeze)
-	recon := application.NewReconcileService()
+	recon := application.NewReconcileService(repos.Entry, repos.Account, repos.Freeze, repos.Reconcile)
 
 	srv := httpserver.New(assetSvc, accountSvc, books, query, recon, cfg.App.DefaultTenant)
 	if err := httpserver.Serve(cfg.HTTP.APIAddr, srv.Engine(), cfg.HTTP.ReadTimeout, cfg.HTTP.WriteTimeout, cfg.HTTP.ShutdownTimeout, zapLog); err != nil {

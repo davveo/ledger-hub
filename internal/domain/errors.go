@@ -5,6 +5,7 @@ import "fmt"
 const (
 	CodeOK                  = 0
 	CodeInvalidParam        = 40001
+	CodeForbidden           = 40301
 	CodeNotFound            = 40401
 	CodeIdempotencyConflict = 40901
 	CodeInsufficient        = 42201
@@ -37,6 +38,7 @@ func Is(err error, code int) bool {
 
 var (
 	ErrInvalidParam        = NewError(CodeInvalidParam, "参数错误 / 资产未注册")
+	ErrForbidden           = NewError(CodeForbidden, "无权对该资产执行该命令")
 	ErrNotFound            = NewError(CodeNotFound, "账户/冻结单不存在")
 	ErrIdempotencyConflict = NewError(CodeIdempotencyConflict, "幂等冲突但命令参数不一致")
 	ErrInsufficient        = NewError(CodeInsufficient, "余额不足")

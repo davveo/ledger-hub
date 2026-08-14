@@ -14,15 +14,16 @@ import (
 )
 
 type Runner struct {
-	cfg    config.WorkerConfig
-	log    *zap.Logger
-	books  *application.Bookkeeping
-	tenant string
+	cfg     config.WorkerConfig
+	log     *zap.Logger
+	books   *application.Bookkeeping
+	recon   *application.ReconcileService
+	tenant  string
 	freezes domain.FreezeRepository
 }
 
-func New(cfg config.WorkerConfig, log *zap.Logger, books *application.Bookkeeping, freezes domain.FreezeRepository, tenant string) *Runner {
-	return &Runner{cfg: cfg, log: log, books: books, freezes: freezes, tenant: tenant}
+func New(cfg config.WorkerConfig, log *zap.Logger, books *application.Bookkeeping, recon *application.ReconcileService, freezes domain.FreezeRepository, tenant string) *Runner {
+	return &Runner{cfg: cfg, log: log, books: books, recon: recon, freezes: freezes, tenant: tenant}
 }
 
 func (r *Runner) Engine() *gin.Engine {
@@ -55,7 +56,7 @@ func (r *Runner) Start(ctx context.Context) {
 			case <-expireTick.C:
 				r.releaseExpired(ctx)
 			case <-reconTick.C:
-				r.log.Info("reconcile tick (Phase 2 placeholder)")
+				r.runDailyReconcile(ctx)
 			}
 		}
 	}()
@@ -75,6 +76,7 @@ func (r *Runner) releaseExpired(ctx context.Context) {
 			BizType:      "freeze_expire",
 			BizNo:        "worker:expire:" + fz.FreezeID,
 			FreezeID:     fz.FreezeID,
+			AssetCode:    fz.AssetCode,
 		})
 		if err != nil {
 			r.log.Warn("auto release freeze failed", zap.String("freeze_id", fz.FreezeID), zap.Error(err))
@@ -82,4 +84,14 @@ func (r *Runner) releaseExpired(ctx context.Context) {
 		}
 		r.log.Info("auto released expired freeze", zap.String("freeze_id", fz.FreezeID))
 	}
+}
+
+func (r *Runner) runDailyReconcile(ctx context.Context) {
+	date := time.Now().UTC().Add(-24 * time.Hour).Format("2006-01-02")
+	rep, err := r.recon.Trigger(ctx, r.tenant, date, "", "", nil)
+	if err != nil {
+		r.log.Warn("daily reconcile failed", zap.String("date", date), zap.Error(err))
+		return
+	}
+	r.log.Info("daily reconcile done", zap.String("job_id", rep.Job.JobID), zap.String("date", date))
 }

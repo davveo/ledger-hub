@@ -120,26 +120,3 @@ func (s *QueryService) FreezeByID(ctx context.Context, freezeID string) (*domain
 func (s *QueryService) FreezeByBizNo(ctx context.Context, tenantID, bizNo string) (*domain.FreezeOrder, error) {
 	return s.freezes.GetByBizNo(ctx, tenantID, bizNo)
 }
-
-type ReconcileService struct{}
-
-func NewReconcileService() *ReconcileService { return &ReconcileService{} }
-
-type ReconcileJob struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
-	Date   string `json:"date"`
-	Note   string `json:"note"`
-}
-
-func (s *ReconcileService) Trigger(_ context.Context, date, sourceSystem, assetCode string) (*ReconcileJob, error) {
-	if date == "" {
-		return nil, domain.ErrInvalidParam
-	}
-	return &ReconcileJob{
-		ID:     idgen.New("rj_"),
-		Status: "accepted",
-		Date:   date,
-		Note:   "Phase 2 对账任务已受理（报表生成待实现） source=" + sourceSystem + " asset=" + assetCode,
-	}, nil
-}

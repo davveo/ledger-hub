@@ -9,12 +9,14 @@ import (
 )
 
 type Config struct {
-	App     AppConfig     `mapstructure:"app"`
-	HTTP    HTTPConfig    `mapstructure:"http"`
-	MySQL   MySQLConfig   `mapstructure:"mysql"`
-	Log     LogConfig     `mapstructure:"log"`
-	Gateway GatewayConfig `mapstructure:"gateway"`
-	Worker  WorkerConfig  `mapstructure:"worker"`
+	App       AppConfig       `mapstructure:"app"`
+	HTTP      HTTPConfig      `mapstructure:"http"`
+	MySQL     MySQLConfig     `mapstructure:"mysql"`
+	Log       LogConfig       `mapstructure:"log"`
+	Gateway   GatewayConfig   `mapstructure:"gateway"`
+	ACL       ACLConfig       `mapstructure:"acl"`
+	Connector ConnectorConfig `mapstructure:"connector"`
+	Worker    WorkerConfig    `mapstructure:"worker"`
 }
 
 type AppConfig struct {
@@ -45,14 +47,29 @@ type LogConfig struct {
 }
 
 type GatewayConfig struct {
-	Upstream    string         `mapstructure:"upstream"`
-	RateLimitRPS int           `mapstructure:"rate_limit_rps"`
-	Clients     []ClientAuth   `mapstructure:"clients"`
+	Upstream     string       `mapstructure:"upstream"`
+	RateLimitRPS int          `mapstructure:"rate_limit_rps"`
+	Clients      []ClientAuth `mapstructure:"clients"`
 }
 
 type ClientAuth struct {
 	ClientID string `mapstructure:"client_id"`
 	Secret   string `mapstructure:"secret"`
+}
+
+type ACLConfig struct {
+	Rules []ACLRuleConfig `mapstructure:"rules"`
+}
+
+type ACLRuleConfig struct {
+	SourceSystem string   `mapstructure:"source_system"`
+	Commands     []string `mapstructure:"commands"`
+	Assets       []string `mapstructure:"assets"`
+}
+
+type ConnectorConfig struct {
+	Addr          string `mapstructure:"addr"`
+	LedgerBaseURL string `mapstructure:"ledger_base_url"`
 }
 
 type WorkerConfig struct {
@@ -83,6 +100,12 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.App.DefaultTenant == "" {
 		cfg.App.DefaultTenant = "t_default"
+	}
+	if cfg.Connector.Addr == "" {
+		cfg.Connector.Addr = ":8090"
+	}
+	if cfg.Connector.LedgerBaseURL == "" {
+		cfg.Connector.LedgerBaseURL = "http://127.0.0.1:8088"
 	}
 	return cfg, nil
 }
