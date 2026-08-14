@@ -21,6 +21,9 @@ type Server struct {
 	fx       *application.FxService
 	tenants  *application.TenantService
 	limits   []domain.LimitRule
+	acl      *application.ACL
+	limiter  *application.Limiter
+	reload   func() error
 	tenant   string
 }
 
@@ -32,6 +35,16 @@ func (s *Server) WithPhase3(fx *application.FxService, tenants *application.Tena
 	s.fx = fx
 	s.tenants = tenants
 	s.limits = limits
+	return s
+}
+
+func (s *Server) WithOps(acl *application.ACL, limiter *application.Limiter, reload func() error) *Server {
+	s.acl = acl
+	s.limiter = limiter
+	s.reload = reload
+	if limiter != nil {
+		s.limits = limiter.Rules()
+	}
 	return s
 }
 
@@ -47,10 +60,14 @@ func (s *Server) Engine() *gin.Engine {
 		g.POST("/assets", s.registerAsset)
 		g.GET("/assets", s.listAssets)
 		g.GET("/assets/:asset_code", s.getAsset)
+		g.POST("/assets/:asset_code/disable", s.setAssetStatus(domain.AssetDisabled))
+		g.POST("/assets/:asset_code/enable", s.setAssetStatus(domain.AssetActive))
 
 		g.POST("/accounts/open", s.openAccount)
 		g.GET("/accounts", s.getAccount)
 		g.GET("/accounts/:account_id", s.getAccountByID)
+		g.POST("/accounts/:account_id/disable", s.setAccountStatus(domain.AccountDisabled))
+		g.POST("/accounts/:account_id/enable", s.setAccountStatus(domain.AccountActive))
 
 		g.POST("/commands", s.dispatchCommand)
 		g.POST("/commands/credit", s.wrap(domain.CmdCredit))
@@ -74,6 +91,11 @@ func (s *Server) Engine() *gin.Engine {
 		g.POST("/tenants", s.saveTenant)
 		g.GET("/tenants", s.listTenants)
 		g.GET("/tenants/:id", s.getTenant)
+		g.POST("/tenants/:id/disable", s.setTenantStatus("disabled"))
+		g.POST("/tenants/:id/enable", s.setTenantStatus("active"))
+
+		g.POST("/ops/reload", s.reloadConfig)
+		g.GET("/openapi.yaml", s.openapiSpec)
 
 		g.POST("/reconcile/jobs", s.triggerReconcile)
 		g.GET("/reconcile/jobs/:id", s.getReconcileJob)
@@ -363,12 +385,25 @@ func (s *Server) getAccount(c *gin.Context) {
 		Type: domain.HolderType(c.Query("holder_type")),
 		ID:   c.Query("holder_id"),
 	}
-	acc, err := s.accounts.Get(c.Request.Context(), s.tenantID(c, ""), holder, c.Query("asset_code"))
+	if c.Query("asset_code") != "" {
+		acc, err := s.accounts.Get(c.Request.Context(), s.tenantID(c, ""), holder, c.Query("asset_code"))
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		ok(c, accountView(acc))
+		return
+	}
+	list, err := s.accounts.ListByHolder(c.Request.Context(), s.tenantID(c, ""), holder, "")
 	if err != nil {
 		fail(c, err)
 		return
 	}
-	ok(c, accountView(acc))
+	views := make([]gin.H, 0, len(list))
+	for _, acc := range list {
+		views = append(views, accountView(acc))
+	}
+	ok(c, views)
 }
 
 func (s *Server) getAccountByID(c *gin.Context) {
@@ -405,12 +440,13 @@ func (s *Server) listEntries(c *gin.Context) {
 			to = &t
 		}
 	}
-	list, err := s.query.EntriesByHolder(c.Request.Context(), tenant, holder, c.Query("asset_code"), from, to)
+	page := parsePage(c)
+	list, err := s.query.EntriesByHolder(c.Request.Context(), tenant, holder, c.Query("asset_code"), from, to, page)
 	if err != nil {
 		fail(c, err)
 		return
 	}
-	ok(c, list)
+	ok(c, gin.H{"items": list, "limit": page.Limit, "offset": page.Offset})
 }
 
 func (s *Server) getFreeze(c *gin.Context) {
@@ -423,6 +459,17 @@ func (s *Server) getFreeze(c *gin.Context) {
 }
 
 func (s *Server) getFreezeByBizNo(c *gin.Context) {
+	if holderID := c.Query("holder_id"); holderID != "" {
+		holder := domain.Holder{Type: domain.HolderType(c.Query("holder_type")), ID: holderID}
+		page := parsePage(c)
+		list, err := s.query.FreezesByHolder(c.Request.Context(), s.tenantID(c, ""), holder, c.Query("asset_code"), c.Query("status"), page)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		ok(c, gin.H{"items": list, "limit": page.Limit, "offset": page.Offset})
+		return
+	}
 	fz, err := s.query.FreezeByBizNo(c.Request.Context(), s.tenantID(c, ""), c.Query("biz_no"))
 	if err != nil {
 		fail(c, err)
@@ -701,14 +748,90 @@ func (s *Server) consoleOverview(c *gin.Context) {
 	if s.tenants != nil {
 		tenants, _ = s.tenants.List(ctx)
 	}
+	limits := s.limits
+	if s.limiter != nil {
+		limits = s.limiter.Rules()
+	}
+	var aclRules []domain.ACLRule
+	if s.acl != nil {
+		aclRules = s.acl.Rules()
+	}
+	var alerts []domain.LimitAlert
+	if s.limiter != nil {
+		alerts = s.limiter.Alerts()
+	}
 	ok(c, gin.H{
 		"tenant_id": tenant,
 		"tenants":   tenants,
 		"assets":    assets,
 		"accounts":  accs,
 		"fx_rates":  rates,
-		"limits":    s.limits,
+		"limits":    limits,
+		"acl":       aclRules,
+		"alerts":    alerts,
 	})
+}
+
+func (s *Server) setAssetStatus(st domain.AssetStatus) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		a, err := s.assets.SetStatus(c.Request.Context(), s.tenantID(c, ""), c.Param("asset_code"), st)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		ok(c, a)
+	}
+}
+
+func (s *Server) setAccountStatus(st domain.AccountStatus) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		acc, err := s.accounts.SetStatus(c.Request.Context(), c.Param("account_id"), st)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		ok(c, accountView(acc))
+	}
+}
+
+func (s *Server) setTenantStatus(status string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if s.tenants == nil {
+			fail(c, domain.ErrNotImplemented)
+			return
+		}
+		t, err := s.tenants.SetStatus(c.Request.Context(), c.Param("id"), status)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		ok(c, t)
+	}
+}
+
+func (s *Server) reloadConfig(c *gin.Context) {
+	if s.reload == nil {
+		fail(c, domain.ErrNotImplemented)
+		return
+	}
+	if err := s.reload(); err != nil {
+		fail(c, domain.NewError(domain.CodeInternal, err.Error()))
+		return
+	}
+	if s.limiter != nil {
+		s.limits = s.limiter.Rules()
+	}
+	var rules []domain.ACLRule
+	if s.acl != nil {
+		rules = s.acl.Rules()
+	}
+	ok(c, gin.H{"reloaded": true, "limits": s.limits, "acl": rules})
+}
+
+func parsePage(c *gin.Context) domain.Page {
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	offset, _ := strconv.Atoi(c.Query("offset"))
+	return domain.Page{Limit: limit, Offset: offset}.Clamp(50, 200)
 }
 
 func accountView(acc *domain.Account) gin.H {

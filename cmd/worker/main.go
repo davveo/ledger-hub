@@ -55,7 +55,8 @@ func main() {
 	run := worker.New(cfg.Worker, zapLog, books, recon, repos.Freeze, cfg.App.DefaultTenant).
 		WithExpire(expire).
 		WithTenants(repos.Tenant).
-		WithFxFeed(fxSvc)
+		WithFxFeed(fxSvc).
+		WithIdempotency(repos.Idempotency)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

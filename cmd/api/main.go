@@ -4,6 +4,8 @@ import (
 	"context"
 	"flag"
 	"log"
+	"os"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -15,6 +17,30 @@ import (
 	"github.com/davveo/ledger-hub/internal/infrastructure/logger"
 	"github.com/davveo/ledger-hub/internal/infrastructure/persistence"
 )
+
+func watchConfig(path string, reload func() error, log *zap.Logger) {
+	tick := time.NewTicker(15 * time.Second)
+	defer tick.Stop()
+	var last time.Time
+	if fi, err := os.Stat(path); err == nil {
+		last = fi.ModTime()
+	}
+	for range tick.C {
+		fi, err := os.Stat(path)
+		if err != nil {
+			continue
+		}
+		if !fi.ModTime().After(last) {
+			continue
+		}
+		last = fi.ModTime()
+		if err := reload(); err != nil {
+			log.Warn("reload config failed", zap.Error(err))
+			continue
+		}
+		log.Info("acl/limits reloaded from config")
+	}
+}
 
 func main() {
 	cfgPath := flag.String("config", "configs/config.yaml", "config file")
@@ -56,9 +82,22 @@ func main() {
 		Name:     "default",
 		Status:   "active",
 	})
+	_ = application.SeedAssets(context.Background(), assetSvc, cfg.App.DefaultTenant)
+
+	reload := func() error {
+		fresh, err := config.Load(*cfgPath)
+		if err != nil {
+			return err
+		}
+		acl.Replace(bootstrap.ACL(fresh.ACL).Rules())
+		limiter.Replace(bootstrap.Limits(fresh.Limits))
+		return nil
+	}
+	go watchConfig(*cfgPath, reload, zapLog)
 
 	srv := httpserver.New(assetSvc, accountSvc, books, query, recon, cfg.App.DefaultTenant).
-		WithPhase3(fxSvc, tenantSvc, limitRules)
+		WithPhase3(fxSvc, tenantSvc, limitRules).
+		WithOps(acl, limiter, reload)
 	if err := httpserver.Serve(cfg.HTTP.APIAddr, srv.Engine(), cfg.HTTP.ReadTimeout, cfg.HTTP.WriteTimeout, cfg.HTTP.ShutdownTimeout, zapLog); err != nil {
 		zapLog.Fatal("api exit", zap.Error(err))
 	}

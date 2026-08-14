@@ -209,12 +209,47 @@ type Tenant struct {
 }
 
 type LimitRule struct {
+	TenantID     string  `json:"tenant_id,omitempty"`
 	SourceSystem string  `json:"source_system"`
 	AssetCode    string  `json:"asset_code"`
 	Command      Command `json:"command"`
 	MaxAmount    int64   `json:"max_amount"`
 	DailyAmount  int64   `json:"daily_amount"`
 	DailyCount   int     `json:"daily_count"`
+}
+
+type LimitAlert struct {
+	At           time.Time `json:"at"`
+	TenantID     string    `json:"tenant_id"`
+	SourceSystem string    `json:"source_system"`
+	HolderID     string    `json:"holder_id"`
+	AssetCode    string    `json:"asset_code"`
+	Command      Command   `json:"command"`
+	Reason       string    `json:"reason"`
+}
+
+type Page struct {
+	Limit  int `json:"limit"`
+	Offset int `json:"offset"`
+}
+
+func (p Page) Clamp(def, max int) Page {
+	if def <= 0 {
+		def = 50
+	}
+	if max <= 0 {
+		max = 200
+	}
+	if p.Limit <= 0 {
+		p.Limit = def
+	}
+	if p.Limit > max {
+		p.Limit = max
+	}
+	if p.Offset < 0 {
+		p.Offset = 0
+	}
+	return p
 }
 
 const (
@@ -231,9 +266,21 @@ const (
 )
 
 type ACLRule struct {
-	SourceSystem string
-	Commands     []string
-	Assets       []string
+	TenantID     string   `json:"tenant_id,omitempty"`
+	SourceSystem string   `json:"source_system"`
+	Commands     []string `json:"commands"`
+	Assets       []string `json:"assets"`
+}
+
+type GatewayAudit struct {
+	AuditID    string
+	ClientID   string
+	Method     string
+	Path       string
+	Status     int
+	RemoteAddr string
+	RequestID  string
+	CreatedAt  time.Time
 }
 
 const (

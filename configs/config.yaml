@@ -26,11 +26,15 @@ log:
 gateway:
   upstream: "http://127.0.0.1:8080"
   rate_limit_rps: 200
+  max_skew_seconds: 300
+  console_token: "dev-console-token"
   clients:
     - client_id: order
       secret: "dev-secret-order"
+      rate_limit_rps: 80
     - client_id: pay
       secret: "dev-secret-pay"
+      rate_limit_rps: 80
     - client_id: campaign
       secret: "dev-secret-campaign"
     - client_id: wallet
@@ -57,12 +61,16 @@ acl:
 connector:
   addr: ":8090"
   ledger_base_url: "http://127.0.0.1:8088"
+  mq_dir: data/mq
+  mq_interval: 2s
 
 worker:
   freeze_expire_interval: 30s
   reconcile_interval: 1h
   asset_expire_interval: 24h
   fx_feed_interval: 1h
+  idempotency_interval: 1h
+  idempotency_retain: 192h
   fx_feed:
     - base_asset: BALANCE_CNY
       quote_asset: BALANCE_USD

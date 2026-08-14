@@ -110,6 +110,31 @@ func (r memAccount) ListByTenant(_ context.Context, tenant, asset string) ([]*do
 	}
 	return out, nil
 }
+func (r memAccount) ListByHolder(_ context.Context, tenant string, h domain.Holder, asset string) ([]*domain.Account, error) {
+	var out []*domain.Account
+	for _, a := range r.m.accs {
+		if a.TenantID != tenant || a.HolderID != h.ID {
+			continue
+		}
+		if h.Type != "" && a.HolderType != h.Type {
+			continue
+		}
+		if asset != "" && a.AssetCode != asset {
+			continue
+		}
+		cp := *a
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+func (r memAccount) UpdateStatus(_ context.Context, a *domain.Account) error {
+	cur := r.m.accs[a.AccountID]
+	if cur == nil {
+		return domain.ErrNotFound
+	}
+	cur.Status = a.Status
+	return nil
+}
 
 func (m *mem) CreateEntry(_ context.Context, e *domain.LedgerEntry) error {
 	cp := *e
@@ -128,8 +153,32 @@ func (m *mem) ListByBizNo(_ context.Context, _, biz string) ([]*domain.LedgerEnt
 	}
 	return out, nil
 }
-func (m *mem) ListByHolder(_ context.Context, _ string, _ domain.Holder, _ string, _, _ *time.Time) ([]*domain.LedgerEntry, error) {
-	return m.entries, nil
+func (m *mem) ListByHolder(_ context.Context, tenant string, h domain.Holder, asset string, _, _ *time.Time, page domain.Page) ([]*domain.LedgerEntry, error) {
+	page = page.Clamp(50, 200)
+	var all []*domain.LedgerEntry
+	for _, e := range m.entries {
+		if e.HolderID != h.ID {
+			continue
+		}
+		if tenant != "" && e.TenantID != tenant {
+			continue
+		}
+		if h.Type != "" && e.HolderType != h.Type {
+			continue
+		}
+		if asset != "" && e.AssetCode != asset {
+			continue
+		}
+		all = append(all, e)
+	}
+	if page.Offset >= len(all) {
+		return nil, nil
+	}
+	end := page.Offset + page.Limit
+	if end > len(all) {
+		end = len(all)
+	}
+	return all[page.Offset:end], nil
 }
 func (m *mem) ListByRange(_ context.Context, _, _, _ string, _, _ time.Time) ([]*domain.LedgerEntry, error) {
 	return m.entries, nil
@@ -213,8 +262,8 @@ func (r memEntry) Create(ctx context.Context, e *domain.LedgerEntry) error {
 func (r memEntry) ListByBizNo(ctx context.Context, t, b string) ([]*domain.LedgerEntry, error) {
 	return r.m.ListByBizNo(ctx, t, b)
 }
-func (r memEntry) ListByHolder(ctx context.Context, t string, h domain.Holder, a string, from, to *time.Time) ([]*domain.LedgerEntry, error) {
-	return r.m.ListByHolder(ctx, t, h, a, from, to)
+func (r memEntry) ListByHolder(ctx context.Context, t string, h domain.Holder, a string, from, to *time.Time, page domain.Page) ([]*domain.LedgerEntry, error) {
+	return r.m.ListByHolder(ctx, t, h, a, from, to, page)
 }
 func (r memEntry) ListByRange(ctx context.Context, t, s, a string, from, to time.Time) ([]*domain.LedgerEntry, error) {
 	return r.m.ListByRange(ctx, t, s, a, from, to)
@@ -260,11 +309,49 @@ func (r memFreeze) ListExpired(ctx context.Context, n time.Time, l int) ([]*doma
 func (r memFreeze) ListFrozen(ctx context.Context, t, a string) ([]*domain.FreezeOrder, error) {
 	return r.m.ListFrozen(ctx, t, a)
 }
+func (r memFreeze) ListByHolder(_ context.Context, tenant string, h domain.Holder, asset, status string, page domain.Page) ([]*domain.FreezeOrder, error) {
+	page = page.Clamp(50, 200)
+	accIDs := map[string]struct{}{}
+	for _, a := range r.m.accs {
+		if a.TenantID == tenant && a.HolderID == h.ID && (h.Type == "" || a.HolderType == h.Type) && (asset == "" || a.AssetCode == asset) {
+			accIDs[a.AccountID] = struct{}{}
+		}
+	}
+	var out []*domain.FreezeOrder
+	for _, f := range r.m.freezes {
+		if _, ok := accIDs[f.AccountID]; !ok {
+			continue
+		}
+		if status != "" && string(f.Status) != status {
+			continue
+		}
+		cp := *f
+		out = append(out, &cp)
+	}
+	if page.Offset >= len(out) {
+		return nil, nil
+	}
+	end := page.Offset + page.Limit
+	if end > len(out) {
+		end = len(out)
+	}
+	return out[page.Offset:end], nil
+}
 func (r memIdem) Get(ctx context.Context, t, s, b string, c domain.Command) (*domain.IdempotencyRecord, error) {
 	return r.m.GetIdem(ctx, t, s, b, c)
 }
 func (r memIdem) Create(ctx context.Context, rec *domain.IdempotencyRecord) error {
 	return r.m.CreateIdem(ctx, rec)
+}
+func (r memIdem) DeleteBefore(_ context.Context, before time.Time) (int64, error) {
+	var n int64
+	for k, rec := range r.m.idem {
+		_ = rec
+		_ = before
+		delete(r.m.idem, k)
+		n++
+	}
+	return n, nil
 }
 
 func setupBooks(t *testing.T) (*Bookkeeping, *mem) {

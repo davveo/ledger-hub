@@ -21,6 +21,7 @@ type Runner struct {
 	expire  *application.ExpireEngine
 	fx      *application.FxService
 	tenants domain.TenantRepository
+	idem    domain.IdempotencyRepository
 	tenant  string
 	freezes domain.FreezeRepository
 }
@@ -41,6 +42,11 @@ func (r *Runner) WithTenants(t domain.TenantRepository) *Runner {
 
 func (r *Runner) WithFxFeed(fx *application.FxService) *Runner {
 	r.fx = fx
+	return r
+}
+
+func (r *Runner) WithIdempotency(idem domain.IdempotencyRepository) *Runner {
+	r.idem = idem
 	return r
 }
 
@@ -70,15 +76,21 @@ func (r *Runner) Start(ctx context.Context) {
 	if feedEvery <= 0 {
 		feedEvery = time.Hour
 	}
+	idemEvery := r.cfg.IdempotencyInterval
+	if idemEvery <= 0 {
+		idemEvery = time.Hour
+	}
 	expireTick := time.NewTicker(expireEvery)
 	reconTick := time.NewTicker(reconEvery)
 	assetTick := time.NewTicker(assetEvery)
 	feedTick := time.NewTicker(feedEvery)
+	idemTick := time.NewTicker(idemEvery)
 	go func() {
 		defer expireTick.Stop()
 		defer reconTick.Stop()
 		defer assetTick.Stop()
 		defer feedTick.Stop()
+		defer idemTick.Stop()
 		for {
 			select {
 			case <-ctx.Done():
@@ -91,6 +103,8 @@ func (r *Runner) Start(ctx context.Context) {
 				r.runAssetExpire(ctx)
 			case <-feedTick.C:
 				r.runFxFeed(ctx)
+			case <-idemTick.C:
+				r.purgeIdempotency(ctx)
 			}
 		}
 	}()
@@ -197,5 +211,23 @@ func (r *Runner) runFxFeed(ctx context.Context) {
 			continue
 		}
 		r.log.Info("fx feed saved", zap.String("base", p.BaseAsset), zap.String("quote", p.QuoteAsset), zap.String("rate", p.Rate))
+	}
+}
+
+func (r *Runner) purgeIdempotency(ctx context.Context) {
+	if r.idem == nil {
+		return
+	}
+	retain := r.cfg.IdempotencyRetain
+	if retain <= 0 {
+		retain = 8 * 24 * time.Hour
+	}
+	n, err := r.idem.DeleteBefore(ctx, time.Now().UTC().Add(-retain))
+	if err != nil {
+		r.log.Warn("idempotency purge failed", zap.Error(err))
+		return
+	}
+	if n > 0 {
+		r.log.Info("idempotency purged", zap.Int64("deleted", n))
 	}
 }

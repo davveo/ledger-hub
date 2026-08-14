@@ -1,0 +1,228 @@
+openapi: 3.0.3
+info:
+  title: Ledger Hub API
+  version: "1.1.0"
+  description: 通用账本中台 HTTP 接口。金额均为最小单位整数，JSON 用字符串传递。
+servers:
+  - url: /api/v1/ledger
+paths:
+  /commands:
+    post:
+      summary: 聚合记账命令
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Command"
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Envelope"
+  /commands/credit:
+    post:
+      summary: Credit
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Command"
+      responses:
+        "200":
+          description: ok
+  /commands/debit:
+    post:
+      summary: Debit
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Command"
+      responses:
+        "200":
+          description: ok
+  /commands/freeze:
+    post:
+      summary: Freeze
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Command"
+      responses:
+        "200":
+          description: ok
+  /commands/capture:
+    post:
+      summary: Capture
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Command"
+      responses:
+        "200":
+          description: ok
+  /commands/release:
+    post:
+      summary: Release
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Command"
+      responses:
+        "200":
+          description: ok
+  /commands/transfer:
+    post:
+      summary: Transfer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Command"
+      responses:
+        "200":
+          description: ok
+  /commands/exchange:
+    post:
+      summary: Exchange
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Command"
+      responses:
+        "200":
+          description: ok
+  /commands/reverse:
+    post:
+      summary: Reverse
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Command"
+      responses:
+        "200":
+          description: ok
+  /accounts:
+    get:
+      summary: 查询账户；holder_id 且无 asset_code 时返回该持有人全部币种
+      parameters:
+        - in: query
+          name: holder_id
+          schema: { type: string }
+        - in: query
+          name: holder_type
+          schema: { type: string }
+        - in: query
+          name: asset_code
+          schema: { type: string }
+      responses:
+        "200":
+          description: 单账户或账户列表
+  /entries:
+    get:
+      summary: 流水（支持 limit/offset）
+      parameters:
+        - in: query
+          name: holder_id
+          schema: { type: string }
+        - in: query
+          name: biz_no
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer }
+        - in: query
+          name: offset
+          schema: { type: integer }
+      responses:
+        "200":
+          description: items 分页
+  /freezes:
+    get:
+      summary: 按 biz_no 查单条，或按 holder_id 列冻结单
+      parameters:
+        - in: query
+          name: holder_id
+          schema: { type: string }
+        - in: query
+          name: biz_no
+          schema: { type: string }
+      responses:
+        "200":
+          description: 冻结单
+  /journals/{id}:
+    get:
+      summary: Journal 及分录
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: journal + entries
+  /openapi.yaml:
+    get:
+      summary: OpenAPI 文档
+      responses:
+        "200":
+          description: YAML
+components:
+  schemas:
+    Holder:
+      type: object
+      properties:
+        type: { type: string, example: user }
+        id: { type: string }
+    Command:
+      type: object
+      required: [source_system, biz_no]
+      properties:
+        command: { type: string }
+        tenant_id: { type: string }
+        source_system: { type: string }
+        biz_type: { type: string }
+        biz_no: { type: string }
+        holder: { $ref: "#/components/schemas/Holder" }
+        asset_code: { type: string }
+        amount: { type: string }
+        freeze_id: { type: string }
+        related_biz_no: { type: string }
+        to_holder: { $ref: "#/components/schemas/Holder" }
+        to:
+          type: object
+          properties:
+            asset_code: { type: string }
+            amount: { type: string }
+    Envelope:
+      type: object
+      properties:
+        code: { type: integer }
+        message: { type: string }
+        data: { type: object }
+    Account:
+      type: object
+      properties:
+        account_id: { type: string }
+        holder_id: { type: string }
+        asset_code: { type: string }
+        available: { type: string }
+        frozen: { type: string }
+        status: { type: string }
+    CommandResult:
+      type: object
+      properties:
+        accepted: { type: boolean }
+        journal_id: { type: string }
+        entry_ids:
+          type: array
+          items: { type: string }
+        account: { $ref: "#/components/schemas/Account" }

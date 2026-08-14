@@ -25,6 +25,8 @@ log:
 gateway:
   upstream: "http://api:8080"
   rate_limit_rps: 200
+  max_skew_seconds: 300
+  console_token: "dev-console-token"
   clients:
     - client_id: order
       secret: "dev-secret-order"
@@ -47,10 +49,10 @@ acl:
       commands: ["Credit"]
       assets: ["BALANCE_CNY"]
     - source_system: wallet
-      commands: ["Credit", "Debit", "Freeze", "Capture", "Release", "Transfer", "Exchange"]
+      commands: ["Credit", "Debit", "Freeze", "Capture", "Release", "Transfer", "Exchange", "Reverse"]
       assets: ["POINT", "BALANCE_CNY", "BALANCE_USD"]
     - source_system: worker
-      commands: ["Release", "Debit", "Transfer"]
+      commands: ["Release", "Debit", "Transfer", "Reverse"]
       assets: ["*"]
 
 connector:

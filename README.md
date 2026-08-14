@@ -348,7 +348,7 @@ GORM AutoMigrate 创建以下表（金额一律 BIGINT 最小单位）：
 | `ledger_reconcile_job` | 日终对账任务与汇总 |
 | `ledger_reconcile_diff` | 差异工单（多账/少账/金额/币种/勾稽/兑换不完整） |
 
-样板资产：`POINT`、`BALANCE_CNY`、`BALANCE_USD`、`BALANCE_HKD`、`COIN`、`GROWTH`。
+样板资产：`POINT`、`BALANCE_CNY`、`BALANCE_USD`、`BALANCE_HKD`、`COIN`、`GROWTH`（API 启动时自动种子，已存在则跳过）。
 
 ---
 
@@ -383,7 +383,7 @@ wallet    → Credit / Debit / Freeze / Capture / Release / Transfer / Exchange 
 worker    → Release / Debit / Transfer / Reverse *
 ```
 
-运营台：浏览器打开 `http://127.0.0.1:8080/console`。
+运营台：浏览器打开 `http://127.0.0.1:8080/console`，或经网关 `http://127.0.0.1:8088/console`（需 `X-Console-Token`）。OpenAPI：`GET /api/v1/ledger/openapi.yaml`。Gateway 写/读请求均需 HMAC，时间窗默认 300s。
 
 分库：`mysql.shards` 配置额外 DSN；账户 / 流水 / 冻结 / 幂等按 `holder_id` 哈希路由。未配置时仍为单库。同 holder 的 Exchange 落在同一分片；跨 holder Transfer 若分片不同则经 `pending_settlement` 两段记账。
 

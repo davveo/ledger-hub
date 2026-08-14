@@ -1,0 +1,60 @@
+package persistence
+
+import (
+	"context"
+
+	"gorm.io/gorm"
+
+	"github.com/davveo/ledger-hub/internal/domain"
+	"github.com/davveo/ledger-hub/internal/infrastructure/idgen"
+)
+
+type AuditRepo struct{ db *gorm.DB }
+
+func NewAuditRepo(db *gorm.DB) *AuditRepo { return &AuditRepo{db: db} }
+
+func (r *AuditRepo) Create(ctx context.Context, a *domain.GatewayAudit) error {
+	if a == nil {
+		return domain.ErrInvalidParam
+	}
+	if a.AuditID == "" {
+		a.AuditID = idgen.New("aud_")
+	}
+	return dbFrom(ctx, r.db).Create(&LedgerGatewayAudit{
+		AuditID:    a.AuditID,
+		ClientID:   a.ClientID,
+		Method:     a.Method,
+		Path:       a.Path,
+		Status:     a.Status,
+		RemoteAddr: a.RemoteAddr,
+		RequestID:  a.RequestID,
+		CreatedAt:  a.CreatedAt,
+	}).Error
+}
+
+func (r *AuditRepo) List(ctx context.Context, limit int) ([]*domain.GatewayAudit, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	var rows []LedgerGatewayAudit
+	if err := dbFrom(ctx, r.db).Order("id desc").Limit(limit).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]*domain.GatewayAudit, 0, len(rows))
+	for i := range rows {
+		out = append(out, &domain.GatewayAudit{
+			AuditID:    rows[i].AuditID,
+			ClientID:   rows[i].ClientID,
+			Method:     rows[i].Method,
+			Path:       rows[i].Path,
+			Status:     rows[i].Status,
+			RemoteAddr: rows[i].RemoteAddr,
+			RequestID:  rows[i].RequestID,
+			CreatedAt:  rows[i].CreatedAt,
+		})
+	}
+	return out, nil
+}

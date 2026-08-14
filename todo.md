@@ -56,17 +56,17 @@
 
 ## P1 · 查询与接入体验
 
-- [ ] **批量查账户（多币种钱包）**
+- [x] **批量查账户（多币种钱包）**
   - `GET /accounts?holder_id=` 一次返回该 holder 下全部 `asset_code`，避免 N 次请求。
-- [ ] **流水 / 冻结分页与按 holder 列冻结单**
+- [x] **流水 / 冻结分页与按 holder 列冻结单**
   - 流水硬编码 `Limit(200)`；无 `GET /freezes?holder_id=`。
-- [ ] **OpenAPI + 类型化 SDK**
+- [x] **OpenAPI + 类型化 SDK**
   - `pkg/client` 目前是 `map[string]interface{}`。补：生成 spec、强类型 Command、查询账户/流水/Journal。
-- [ ] **样板资产种子**
+- [x] **样板资产种子**
   - README 写了 POINT / BALANCE_CNY / USD / HKD / COIN / GROWTH，启动不自动注册。
-- [ ] **Connector：退款 / MQ**
+- [x] **Connector：退款 / MQ**
   - 仅 HTTP 事件；缺 `refund → Credit(related_biz_no)`，也未订阅订单/支付 MQ。
-- [ ] **Gateway 鉴权加固**
+- [x] **Gateway 鉴权加固**
   - GET 完全免签（含对账报表）；无时间窗防重放；`audit()` 空实现；限流是全局秒桶不是按 client。
   - `/console` 未走网关。补：timestamp 偏差、审计落库、按 client RPS、运营台鉴权。
 
@@ -74,13 +74,13 @@
 
 ## P1 · 运营与风控
 
-- [ ] **运营台做成可用的控制台**
+- [x] **运营台做成可用的控制台**
   - 现页只能登记汇率、触发对账、JSON 概览。缺：资产 CRUD、租户启停、账户/流水检索、差异工单关闭、限额规则展示与告警。
-- [ ] **ACL / 限额热加载与租户隔离**
+- [x] **ACL / 限额热加载与租户隔离**
   - 规则只在 yaml，改配置要重启；限额不按租户；超限无告警只有 `42901`。
-- [ ] **账户停用 / 资产下线 API**
+- [x] **账户停用 / 资产下线 API**
   - 只有注册与查询，没有 `disabled` 操作入口。
-- [ ] **幂等记录清理**
+- [x] **幂等记录清理**
   - `ledger_idempotency` 只增不删，需 TTL 或归档策略（保留期与对账窗口对齐）。
 
 ---

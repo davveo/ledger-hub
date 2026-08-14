@@ -51,6 +51,7 @@ func AutoMigrate(db *gorm.DB) error {
 		&LedgerLimitUsage{},
 		&LedgerReconcileJob{},
 		&LedgerReconcileDiff{},
+		&LedgerGatewayAudit{},
 	)
 }
 
@@ -127,6 +128,7 @@ type Repos struct {
 	ExchangeLeg domain.ExchangeLegRepository
 	Tenant      domain.TenantRepository
 	Limit       domain.LimitRepository
+	Audit       domain.AuditRepository
 }
 
 func NewRepos(db *gorm.DB) *Repos {
@@ -142,6 +144,7 @@ func NewRepos(db *gorm.DB) *Repos {
 		ExchangeLeg: NewExchangeLegRepo(db),
 		Tenant:      NewTenantRepo(db),
 		Limit:       NewLimitRepo(db),
+		Audit:       NewAuditRepo(db),
 	}
 }
 
@@ -159,6 +162,7 @@ func NewClusterRepos(c *Cluster) *Repos {
 		ExchangeLeg: NewExchangeLegRepo(primary).WithCluster(c),
 		Tenant:      NewTenantRepo(primary),
 		Limit:       NewLimitRepo(primary).WithCluster(c),
+		Audit:       NewAuditRepo(primary),
 	}
 }
 

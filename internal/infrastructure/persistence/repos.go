@@ -137,6 +137,22 @@ func (r *AccountRepo) UpdateBalances(ctx context.Context, a *domain.Account) err
 	return nil
 }
 
+func (r *AccountRepo) UpdateStatus(ctx context.Context, a *domain.Account) error {
+	if a == nil || a.AccountID == "" {
+		return domain.ErrInvalidParam
+	}
+	res := routeDB(ctx, r.cluster, r.db, a.HolderID).Model(&LedgerAccount{}).
+		Where("account_id = ?", a.AccountID).
+		Update("status", string(a.Status))
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func (r *AccountRepo) ListByTenant(ctx context.Context, tenantID, assetCode string) ([]*domain.Account, error) {
 	var out []*domain.Account
 	for _, db := range scanDBs(ctx, r.cluster, r.db) {
@@ -151,6 +167,25 @@ func (r *AccountRepo) ListByTenant(ctx context.Context, tenantID, assetCode stri
 		for i := range rows {
 			out = append(out, rows[i].toDomain())
 		}
+	}
+	return out, nil
+}
+
+func (r *AccountRepo) ListByHolder(ctx context.Context, tenantID string, holder domain.Holder, assetCode string) ([]*domain.Account, error) {
+	if holder.ID == "" {
+		return nil, domain.ErrInvalidParam
+	}
+	q := routeDB(ctx, r.cluster, r.db, holder.ID).Where("tenant_id = ? AND holder_type = ? AND holder_id = ?", tenantID, holder.Type, holder.ID)
+	if assetCode != "" {
+		q = q.Where("asset_code = ?", assetCode)
+	}
+	var rows []LedgerAccount
+	if err := q.Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]*domain.Account, 0, len(rows))
+	for i := range rows {
+		out = append(out, rows[i].toDomain())
 	}
 	return out, nil
 }
@@ -183,7 +218,8 @@ func (r *EntryRepo) ListByBizNo(ctx context.Context, tenantID, bizNo string) ([]
 	return out, nil
 }
 
-func (r *EntryRepo) ListByHolder(ctx context.Context, tenantID string, holder domain.Holder, assetCode string, from, to *time.Time) ([]*domain.LedgerEntry, error) {
+func (r *EntryRepo) ListByHolder(ctx context.Context, tenantID string, holder domain.Holder, assetCode string, from, to *time.Time, page domain.Page) ([]*domain.LedgerEntry, error) {
+	page = page.Clamp(50, 200)
 	q := routeDB(ctx, r.cluster, r.db, holder.ID).Where("tenant_id = ? AND holder_type = ? AND holder_id = ?", tenantID, holder.Type, holder.ID)
 	if assetCode != "" {
 		q = q.Where("asset_code = ?", assetCode)
@@ -195,7 +231,7 @@ func (r *EntryRepo) ListByHolder(ctx context.Context, tenantID string, holder do
 		q = q.Where("created_at < ?", *to)
 	}
 	var rows []LedgerEntry
-	if err := q.Order("id desc").Limit(200).Find(&rows).Error; err != nil {
+	if err := q.Order("id desc").Offset(page.Offset).Limit(page.Limit).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	return entriesToDomain(rows), nil
@@ -376,6 +412,40 @@ func (r *FreezeRepo) ListFrozen(ctx context.Context, tenantID, assetCode string)
 	return out, nil
 }
 
+func (r *FreezeRepo) ListByHolder(ctx context.Context, tenantID string, holder domain.Holder, assetCode, status string, page domain.Page) ([]*domain.FreezeOrder, error) {
+	page = page.Clamp(50, 200)
+	var accIDs []string
+	for _, db := range scanDBs(ctx, r.cluster, r.db) {
+		q := db.Model(&LedgerAccount{}).Where("tenant_id = ? AND holder_type = ? AND holder_id = ?", tenantID, holder.Type, holder.ID)
+		if assetCode != "" {
+			q = q.Where("asset_code = ?", assetCode)
+		}
+		var ids []string
+		if err := q.Pluck("account_id", &ids).Error; err != nil {
+			return nil, err
+		}
+		accIDs = append(accIDs, ids...)
+	}
+	if len(accIDs) == 0 {
+		return nil, nil
+	}
+	var out []*domain.FreezeOrder
+	for _, db := range scanDBs(ctx, r.cluster, r.db) {
+		q := db.Where("tenant_id = ? AND account_id IN ?", tenantID, accIDs)
+		if status != "" {
+			q = q.Where("status = ?", status)
+		}
+		var rows []LedgerFreeze
+		if err := q.Order("id desc").Offset(page.Offset).Limit(page.Limit).Find(&rows).Error; err != nil {
+			return nil, err
+		}
+		for i := range rows {
+			out = append(out, rows[i].toDomain())
+		}
+	}
+	return out, nil
+}
+
 type IdempotencyRepo struct {
 	db      *gorm.DB
 	cluster *Cluster
@@ -427,4 +497,16 @@ func (r *IdempotencyRepo) Create(ctx context.Context, rec *domain.IdempotencyRec
 		ResponseJSON: rec.ResponseJSON,
 	}
 	return dbFrom(ctx, r.db).Create(m).Error
+}
+
+func (r *IdempotencyRepo) DeleteBefore(ctx context.Context, before time.Time) (int64, error) {
+	var n int64
+	for _, db := range scanDBs(ctx, r.cluster, r.db) {
+		res := db.Where("created_at < ?", before).Delete(&LedgerIdempotency{})
+		if res.Error != nil {
+			return n, res.Error
+		}
+		n += res.RowsAffected
+	}
+	return n, nil
 }

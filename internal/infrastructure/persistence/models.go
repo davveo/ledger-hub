@@ -370,3 +370,17 @@ func (m *LedgerFxRate) toDomain() *domain.FxRate {
 		CreatedBy:  m.CreatedBy,
 	}
 }
+
+type LedgerGatewayAudit struct {
+	ID         uint64 `gorm:"primaryKey;autoIncrement"`
+	AuditID    string `gorm:"size:64;uniqueIndex;not null"`
+	ClientID   string `gorm:"size:64;index;not null"`
+	Method     string `gorm:"size:16;not null"`
+	Path       string `gorm:"size:255;not null"`
+	Status     int    `gorm:"not null"`
+	RemoteAddr string `gorm:"size:64"`
+	RequestID  string `gorm:"size:64;index"`
+	CreatedAt  time.Time `gorm:"index"`
+}
+
+func (LedgerGatewayAudit) TableName() string { return "ledger_gateway_audit" }

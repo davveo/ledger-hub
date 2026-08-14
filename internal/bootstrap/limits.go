@@ -9,6 +9,7 @@ func Limits(cfg config.LimitConfig) []domain.LimitRule {
 	out := make([]domain.LimitRule, 0, len(cfg.Rules))
 	for _, r := range cfg.Rules {
 		out = append(out, domain.LimitRule{
+			TenantID:     r.TenantID,
 			SourceSystem: r.SourceSystem,
 			AssetCode:    r.AssetCode,
 			Command:      domain.Command(r.Command),

@@ -37,6 +37,21 @@ func (s *AssetService) List(ctx context.Context, tenantID string) ([]*domain.Ass
 	return s.assets.List(ctx, tenantID)
 }
 
+func (s *AssetService) SetStatus(ctx context.Context, tenantID, assetCode string, status domain.AssetStatus) (*domain.Asset, error) {
+	if status != domain.AssetActive && status != domain.AssetDisabled {
+		return nil, domain.ErrInvalidParam
+	}
+	a, err := s.assets.Get(ctx, tenantID, assetCode)
+	if err != nil {
+		return nil, err
+	}
+	a.Status = status
+	if err := s.assets.Save(ctx, a); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
 type AccountService struct {
 	assets domain.AssetRepository
 	accs   domain.AccountRepository
@@ -97,6 +112,35 @@ func (s *AccountService) GetByID(ctx context.Context, accountID string) (*domain
 	return s.accs.GetByID(ctx, accountID)
 }
 
+func (s *AccountService) List(ctx context.Context, tenantID, assetCode string) ([]*domain.Account, error) {
+	return s.accs.ListByTenant(ctx, tenantID, assetCode)
+}
+
+func (s *AccountService) ListByHolder(ctx context.Context, tenantID string, holder domain.Holder, assetCode string) ([]*domain.Account, error) {
+	if holder.ID == "" {
+		return nil, domain.ErrInvalidParam
+	}
+	if holder.Type == "" {
+		holder.Type = domain.HolderUser
+	}
+	return s.accs.ListByHolder(ctx, tenantID, holder, assetCode)
+}
+
+func (s *AccountService) SetStatus(ctx context.Context, accountID string, status domain.AccountStatus) (*domain.Account, error) {
+	if status != domain.AccountActive && status != domain.AccountDisabled {
+		return nil, domain.ErrInvalidParam
+	}
+	acc, err := s.accs.GetByID(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	acc.Status = status
+	if err := s.accs.UpdateStatus(ctx, acc); err != nil {
+		return nil, err
+	}
+	return acc, nil
+}
+
 type QueryService struct {
 	entries  domain.EntryRepository
 	freezes  domain.FreezeRepository
@@ -119,11 +163,14 @@ func (s *QueryService) EntriesByBizNo(ctx context.Context, tenantID, bizNo strin
 	return s.entries.ListByBizNo(ctx, tenantID, bizNo)
 }
 
-func (s *QueryService) EntriesByHolder(ctx context.Context, tenantID string, holder domain.Holder, assetCode string, from, to *time.Time) ([]*domain.LedgerEntry, error) {
+func (s *QueryService) EntriesByHolder(ctx context.Context, tenantID string, holder domain.Holder, assetCode string, from, to *time.Time, page domain.Page) ([]*domain.LedgerEntry, error) {
 	if holder.ID == "" {
 		return nil, domain.ErrInvalidParam
 	}
-	return s.entries.ListByHolder(ctx, tenantID, holder, assetCode, from, to)
+	if holder.Type == "" {
+		holder.Type = domain.HolderUser
+	}
+	return s.entries.ListByHolder(ctx, tenantID, holder, assetCode, from, to, page.Clamp(50, 200))
 }
 
 func (s *QueryService) FreezeByID(ctx context.Context, freezeID string) (*domain.FreezeOrder, error) {
@@ -132,6 +179,16 @@ func (s *QueryService) FreezeByID(ctx context.Context, freezeID string) (*domain
 
 func (s *QueryService) FreezeByBizNo(ctx context.Context, tenantID, bizNo string) (*domain.FreezeOrder, error) {
 	return s.freezes.GetByBizNo(ctx, tenantID, bizNo)
+}
+
+func (s *QueryService) FreezesByHolder(ctx context.Context, tenantID string, holder domain.Holder, assetCode, status string, page domain.Page) ([]*domain.FreezeOrder, error) {
+	if holder.ID == "" {
+		return nil, domain.ErrInvalidParam
+	}
+	if holder.Type == "" {
+		holder.Type = domain.HolderUser
+	}
+	return s.freezes.ListByHolder(ctx, tenantID, holder, assetCode, status, page.Clamp(50, 200))
 }
 
 func (s *QueryService) Journal(ctx context.Context, journalID string) (*domain.Journal, []*domain.LedgerEntry, error) {
@@ -147,8 +204,4 @@ func (s *QueryService) Journal(ctx context.Context, journalID string) (*domain.J
 		return nil, nil, err
 	}
 	return j, entries, nil
-}
-
-func (s *AccountService) List(ctx context.Context, tenantID, assetCode string) ([]*domain.Account, error) {
-	return s.accs.ListByTenant(ctx, tenantID, assetCode)
 }

@@ -32,6 +32,21 @@ func (s *TenantService) List(ctx context.Context) ([]*domain.Tenant, error) {
 	return s.store.List(ctx)
 }
 
+func (s *TenantService) SetStatus(ctx context.Context, tenantID, status string) (*domain.Tenant, error) {
+	if status != "active" && status != "disabled" {
+		return nil, domain.ErrInvalidParam
+	}
+	t, err := s.store.Get(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	t.Status = status
+	if err := s.store.Save(ctx, t); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
 func (s *TenantService) Ensure(ctx context.Context, tenantID string) error {
 	if s == nil || s.store == nil || tenantID == "" {
 		return nil

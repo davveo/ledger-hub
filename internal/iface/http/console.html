@@ -7,14 +7,14 @@
   <style>
     :root { color-scheme: dark; }
     body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #0f1419; color: #e7ecf3; }
-    header { padding: 20px 28px; border-bottom: 1px solid #243044; display: flex; justify-content: space-between; align-items: baseline; }
+    header { padding: 20px 28px; border-bottom: 1px solid #243044; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
     h1 { margin: 0; font-size: 20px; }
     main { padding: 20px 28px 48px; display: grid; gap: 18px; }
     section { background: #161d27; border: 1px solid #243044; border-radius: 12px; padding: 16px 18px; }
     h2 { margin: 0 0 12px; font-size: 15px; color: #9fb3c8; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #243044; }
-    input, button { background: #0f1419; color: inherit; border: 1px solid #3a4a60; border-radius: 8px; padding: 8px 10px; }
+    input, button, select { background: #0f1419; color: inherit; border: 1px solid #3a4a60; border-radius: 8px; padding: 8px 10px; }
     button { cursor: pointer; background: #1f6feb; border-color: #1f6feb; }
     .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
     .muted { color: #8b9bb0; font-size: 12px; }
@@ -24,49 +24,102 @@
 <body>
 <header>
   <h1>Ledger Hub 运营台</h1>
-  <span class="muted">租户 / 资产 / 汇率 / 账户 / 对账</span>
+  <span class="muted">资产 / 租户 / 账户 / 流水 / 对账 / 限额</span>
 </header>
 <main>
   <section>
-    <h2>登记汇率</h2>
+    <h2>鉴权</h2>
+    <div class="row">
+      <input id="token" placeholder="X-Console-Token" style="min-width:240px"/>
+      <button onclick="saveToken()">保存 Token</button>
+    </div>
+    <p class="muted">经网关访问时填写 configs 中的 gateway.console_token</p>
+  </section>
+  <section>
+    <h2>资产</h2>
+    <div class="row">
+      <input id="assetCode" placeholder="asset_code"/>
+      <input id="assetName" placeholder="name"/>
+      <input id="assetClass" placeholder="asset_class 如 fiat"/>
+      <button onclick="saveAsset()">登记</button>
+      <button onclick="assetStatus('disable')">下线</button>
+      <button onclick="assetStatus('enable')">启用</button>
+    </div>
+    <div id="assets"></div>
+  </section>
+  <section>
+    <h2>租户</h2>
+    <div class="row">
+      <input id="tenantId" placeholder="tenant_id"/>
+      <input id="tenantName" placeholder="name"/>
+      <button onclick="saveTenant()">保存</button>
+      <button onclick="tenantStatus('disable')">停用</button>
+      <button onclick="tenantStatus('enable')">启用</button>
+    </div>
+    <div id="tenants"></div>
+  </section>
+  <section>
+    <h2>账户 / 流水</h2>
+    <div class="row">
+      <input id="holderId" placeholder="holder_id"/>
+      <input id="holderType" placeholder="holder_type" value="user"/>
+      <input id="qAsset" placeholder="asset_code 可空"/>
+      <button onclick="searchAcc()">查账户</button>
+      <button onclick="searchEntries()">查流水</button>
+    </div>
+    <div id="search"></div>
+  </section>
+  <section>
+    <h2>汇率 / 对账</h2>
     <div class="row">
       <input id="base" placeholder="base 如 BALANCE_CNY"/>
       <input id="quote" placeholder="quote 如 BALANCE_USD"/>
       <input id="rate" placeholder="rate 如 0.14000000"/>
-      <button onclick="saveRate()">保存</button>
+      <button onclick="saveRate()">保存汇率</button>
     </div>
     <div class="row">
       <input id="reconDate" placeholder="对账日期 YYYY-MM-DD"/>
       <button onclick="runRecon()">触发日终对账</button>
+      <input id="diffId" placeholder="diff_id"/>
+      <input id="diffNote" placeholder="关闭说明"/>
+      <button onclick="resolveDiff()">关闭差异</button>
     </div>
     <pre id="msg" class="muted"></pre>
   </section>
   <section>
-    <h2>概览</h2>
-    <pre id="overview">加载中…</pre>
+    <h2>限额与告警</h2>
+    <pre id="limits" class="muted">加载中…</pre>
   </section>
   <section>
-    <h2>账户</h2>
+    <h2>账户一览</h2>
     <div id="accounts"></div>
-  </section>
-  <section>
-    <h2>汇率快照</h2>
-    <div id="rates"></div>
   </section>
 </main>
 <script>
+const tokenKey = 'ledger_console_token';
+document.getElementById('token').value = localStorage.getItem(tokenKey) || '';
+function saveToken() {
+  localStorage.setItem(tokenKey, document.getElementById('token').value);
+  load();
+}
+function headers(json) {
+  const h = {};
+  if (json) h['Content-Type'] = 'application/json';
+  const t = localStorage.getItem(tokenKey);
+  if (t) h['X-Console-Token'] = t;
+  return h;
+}
+async function api(path, opt) {
+  const r = await fetch(path, opt);
+  return r.json();
+}
 async function load() {
-  const r = await fetch('/api/v1/ledger/console/overview');
-  const j = await r.json();
+  const j = await api('/api/v1/ledger/console/overview', {headers: headers()});
   const d = j.data || {};
-  document.getElementById('overview').textContent = JSON.stringify({
-    tenant_id: d.tenant_id,
-    tenants: d.tenants,
-    assets: (d.assets||[]).map(a => a.AssetCode || a.asset_code),
-    limits: d.limits
-  }, null, 2);
-  document.getElementById('accounts').innerHTML = table(['account_id','holder_id','asset_code','available','frozen'], d.accounts || []);
-  document.getElementById('rates').innerHTML = table(['RateID','BaseAsset','QuoteAsset','Rate','QuotedAt'], d.fx_rates || []);
+  document.getElementById('limits').textContent = JSON.stringify({limits: d.limits, acl: d.acl, alerts: d.alerts}, null, 2);
+  document.getElementById('accounts').innerHTML = table(['account_id','holder_id','asset_code','available','frozen','status'], d.accounts || []);
+  document.getElementById('assets').innerHTML = table(['AssetCode','Name','Status','AssetClass'], d.assets || []);
+  document.getElementById('tenants').innerHTML = table(['TenantID','Name','Status'], d.tenants || []);
 }
 function table(cols, rows) {
   if (!rows.length) return '<p class="muted">暂无数据</p>';
@@ -77,21 +130,53 @@ function table(cols, rows) {
   }).join('')+'</tr>').join('');
   return '<table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table>';
 }
-async function saveRate() {
-  const body = {
-    base_asset: document.getElementById('base').value,
-    quote_asset: document.getElementById('quote').value,
-    rate: document.getElementById('rate').value,
-    rate_source: 'manual'
-  };
-  const r = await fetch('/api/v1/ledger/fx/rates', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
-  document.getElementById('msg').textContent = await r.text();
+async function saveAsset() {
+  const body = {asset_code: document.getElementById('assetCode').value, name: document.getElementById('assetName').value, asset_class: document.getElementById('assetClass').value};
+  document.getElementById('msg').textContent = JSON.stringify(await api('/api/v1/ledger/assets', {method:'POST', headers: headers(true), body: JSON.stringify(body)}));
   load();
+}
+async function assetStatus(op) {
+  const code = document.getElementById('assetCode').value;
+  document.getElementById('msg').textContent = JSON.stringify(await api('/api/v1/ledger/assets/'+code+'/'+op, {method:'POST', headers: headers(true), body: '{}'}));
+  load();
+}
+async function saveTenant() {
+  const body = {tenant_id: document.getElementById('tenantId').value, name: document.getElementById('tenantName').value, status: 'active'};
+  document.getElementById('msg').textContent = JSON.stringify(await api('/api/v1/ledger/tenants', {method:'POST', headers: headers(true), body: JSON.stringify(body)}));
+  load();
+}
+async function tenantStatus(op) {
+  const id = document.getElementById('tenantId').value;
+  document.getElementById('msg').textContent = JSON.stringify(await api('/api/v1/ledger/tenants/'+id+'/'+op, {method:'POST', headers: headers(true), body: '{}'}));
+  load();
+}
+async function searchAcc() {
+  const q = new URLSearchParams({holder_id: document.getElementById('holderId').value, holder_type: document.getElementById('holderType').value});
+  const asset = document.getElementById('qAsset').value;
+  if (asset) q.set('asset_code', asset);
+  const j = await api('/api/v1/ledger/accounts?'+q.toString(), {headers: headers()});
+  const rows = Array.isArray(j.data) ? j.data : (j.data ? [j.data] : []);
+  document.getElementById('search').innerHTML = table(['account_id','holder_id','asset_code','available','frozen','status'], rows);
+}
+async function searchEntries() {
+  const q = new URLSearchParams({holder_id: document.getElementById('holderId').value, holder_type: document.getElementById('holderType').value, limit: '50'});
+  const asset = document.getElementById('qAsset').value;
+  if (asset) q.set('asset_code', asset);
+  const j = await api('/api/v1/ledger/entries?'+q.toString(), {headers: headers()});
+  document.getElementById('search').innerHTML = table(['EntryID','BizNo','Command','AssetCode','Amount','Direction'], (j.data && j.data.items) || []);
+}
+async function saveRate() {
+  const body = {base_asset: document.getElementById('base').value, quote_asset: document.getElementById('quote').value, rate: document.getElementById('rate').value, rate_source: 'manual'};
+  document.getElementById('msg').textContent = JSON.stringify(await api('/api/v1/ledger/fx/rates', {method:'POST', headers: headers(true), body: JSON.stringify(body)}));
 }
 async function runRecon() {
   const date = document.getElementById('reconDate').value;
-  const r = await fetch('/api/v1/ledger/reconcile/jobs', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({date})});
-  document.getElementById('msg').textContent = await r.text();
+  document.getElementById('msg').textContent = JSON.stringify(await api('/api/v1/ledger/reconcile/jobs', {method:'POST', headers: headers(true), body: JSON.stringify({date})}));
+}
+async function resolveDiff() {
+  const id = document.getElementById('diffId').value;
+  const note = document.getElementById('diffNote').value;
+  document.getElementById('msg').textContent = JSON.stringify(await api('/api/v1/ledger/reconcile/diffs/'+id+'/resolve', {method:'POST', headers: headers(true), body: JSON.stringify({note})}));
 }
 load();
 </script>

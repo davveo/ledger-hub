@@ -10,6 +10,7 @@ func ACL(cfg config.ACLConfig) *application.ACL {
 	rules := make([]domain.ACLRule, 0, len(cfg.Rules))
 	for _, r := range cfg.Rules {
 		rules = append(rules, domain.ACLRule{
+			TenantID:     r.TenantID,
 			SourceSystem: r.SourceSystem,
 			Commands:     r.Commands,
 			Assets:       r.Assets,

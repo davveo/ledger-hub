@@ -50,14 +50,17 @@ type LogConfig struct {
 }
 
 type GatewayConfig struct {
-	Upstream     string       `mapstructure:"upstream"`
-	RateLimitRPS int          `mapstructure:"rate_limit_rps"`
-	Clients      []ClientAuth `mapstructure:"clients"`
+	Upstream       string       `mapstructure:"upstream"`
+	RateLimitRPS   int          `mapstructure:"rate_limit_rps"`
+	MaxSkewSeconds int          `mapstructure:"max_skew_seconds"`
+	ConsoleToken   string       `mapstructure:"console_token"`
+	Clients        []ClientAuth `mapstructure:"clients"`
 }
 
 type ClientAuth struct {
-	ClientID string `mapstructure:"client_id"`
-	Secret   string `mapstructure:"secret"`
+	ClientID     string `mapstructure:"client_id"`
+	Secret       string `mapstructure:"secret"`
+	RateLimitRPS int    `mapstructure:"rate_limit_rps"`
 }
 
 type ACLConfig struct {
@@ -65,6 +68,7 @@ type ACLConfig struct {
 }
 
 type ACLRuleConfig struct {
+	TenantID     string   `mapstructure:"tenant_id"`
 	SourceSystem string   `mapstructure:"source_system"`
 	Commands     []string `mapstructure:"commands"`
 	Assets       []string `mapstructure:"assets"`
@@ -73,14 +77,18 @@ type ACLRuleConfig struct {
 type ConnectorConfig struct {
 	Addr          string `mapstructure:"addr"`
 	LedgerBaseURL string `mapstructure:"ledger_base_url"`
+	MQDir         string `mapstructure:"mq_dir"`
+	MQInterval    time.Duration `mapstructure:"mq_interval"`
 }
 
 type WorkerConfig struct {
-	FreezeExpireInterval time.Duration  `mapstructure:"freeze_expire_interval"`
-	ReconcileInterval    time.Duration  `mapstructure:"reconcile_interval"`
-	AssetExpireInterval  time.Duration  `mapstructure:"asset_expire_interval"`
-	FxFeedInterval       time.Duration  `mapstructure:"fx_feed_interval"`
-	FxFeed               []FxFeedPair   `mapstructure:"fx_feed"`
+	FreezeExpireInterval   time.Duration `mapstructure:"freeze_expire_interval"`
+	ReconcileInterval      time.Duration `mapstructure:"reconcile_interval"`
+	AssetExpireInterval    time.Duration `mapstructure:"asset_expire_interval"`
+	FxFeedInterval         time.Duration `mapstructure:"fx_feed_interval"`
+	IdempotencyInterval    time.Duration `mapstructure:"idempotency_interval"`
+	IdempotencyRetain      time.Duration `mapstructure:"idempotency_retain"`
+	FxFeed                 []FxFeedPair  `mapstructure:"fx_feed"`
 }
 
 type FxFeedPair struct {
@@ -95,6 +103,7 @@ type LimitConfig struct {
 }
 
 type LimitRuleConfig struct {
+	TenantID     string `mapstructure:"tenant_id"`
 	SourceSystem string `mapstructure:"source_system"`
 	AssetCode    string `mapstructure:"asset_code"`
 	Command      string `mapstructure:"command"`
