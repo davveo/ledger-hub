@@ -13,6 +13,7 @@ import (
 	"github.com/davveo/ledger-hub/internal/application"
 	"github.com/davveo/ledger-hub/internal/bootstrap"
 	"github.com/davveo/ledger-hub/internal/config"
+	"github.com/davveo/ledger-hub/internal/domain"
 	httpserver "github.com/davveo/ledger-hub/internal/iface/http"
 	"github.com/davveo/ledger-hub/internal/infrastructure/logger"
 	"github.com/davveo/ledger-hub/internal/infrastructure/persistence"
@@ -43,7 +44,7 @@ func main() {
 	tx := persistence.NewClusterTxManager(cluster)
 	acl := bootstrap.ACL(cfg.ACL)
 	limitRules := bootstrap.Limits(cfg.Limits)
-	limiter := application.NewLimiter(limitRules, repos.Limit)
+	limiter := application.NewLimiter(limitRules, repos.Limit).WithAlerts(repos.Alert)
 	books := application.NewBookkeeping(tx, repos.Asset, repos.Account, repos.Entry, repos.Freeze, repos.Idempotency, acl).
 		UsePhase3(repos.Journal, repos.FxRate, repos.ExchangeLeg, limiter, cluster.SameShard)
 	recon := application.NewReconcileService(repos.Entry, repos.Account, repos.Freeze, repos.Reconcile).
@@ -52,11 +53,17 @@ func main() {
 		WithOutput(cfg.App.ReconcileDir)
 	expire := application.NewExpireEngine(repos.Asset, repos.Account, repos.Entry, books)
 	fxSvc := application.NewFxService(repos.FxRate)
-	run := worker.New(cfg.Worker, zapLog, books, recon, repos.Freeze, cfg.App.DefaultTenant).
-		WithExpire(expire).
+	feeds := make([]domain.FxFeedPair, 0, len(cfg.Worker.FxFeed))
+	for _, p := range cfg.Worker.FxFeed {
+		feeds = append(feeds, domain.FxFeedPair{TenantID: p.TenantID, BaseAsset: p.BaseAsset, QuoteAsset: p.QuoteAsset, Rate: p.Rate})
+	}
+	jobs := application.NewJobs(books, recon, expire, repos.Freeze, cfg.App.DefaultTenant).
+		WithFx(fxSvc, feeds).
 		WithTenants(repos.Tenant).
-		WithFxFeed(fxSvc).
-		WithIdempotency(repos.Idempotency)
+		WithIdempotency(repos.Idempotency, cfg.Worker.IdempotencyRetain).
+		WithRuns(repos.OpsRun).
+		WithAudit(repos.OpsAudit)
+	run := worker.New(cfg.Worker, zapLog, jobs)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

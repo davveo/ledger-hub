@@ -35,7 +35,7 @@ func TestSeedDemoBalances(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Available != 7150 || got.Frozen != 500 {
+	if got.Available != 7050 || got.Frozen != 600 {
 		t.Fatalf("alice POINT avail=%d frozen=%d", got.Available, got.Frozen)
 	}
 	cny, err := memAccount{st}.Get(ctx, "t_default", alice, "BALANCE_CNY")

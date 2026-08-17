@@ -193,11 +193,23 @@ func (s *ReconcileService) ListJobs(ctx context.Context, tenantID string, limit 
 	return s.store.ListJobs(ctx, tenantID, limit)
 }
 
-func (s *ReconcileService) ResolveDiff(ctx context.Context, diffID, note string) error {
+func (s *ReconcileService) ListOpenDiffs(ctx context.Context, tenantID string, limit int) ([]*domain.ReconcileDiff, error) {
+	if s == nil || s.store == nil {
+		return nil, domain.ErrNotFound
+	}
+	return s.store.ListOpenDiffs(ctx, tenantID, limit)
+}
+
+func (s *ReconcileService) ResolveDiff(ctx context.Context, diffID, note, operator string) error {
 	if diffID == "" {
 		return domain.ErrInvalidParam
 	}
-	return s.store.ResolveDiff(ctx, diffID, note)
+	if operator != "" && note != "" {
+		note = operator + ": " + note
+	} else if operator != "" {
+		note = operator
+	}
+	return s.store.ResolveDiff(ctx, diffID, note, operator)
 }
 
 func MatchBizLines(jobID string, biz []domain.BizLine, entries []*domain.LedgerEntry) []*domain.ReconcileDiff {

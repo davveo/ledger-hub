@@ -54,7 +54,8 @@ type ReconcileRepository interface {
 	LatestJob(ctx context.Context, tenantID, date, sourceSystem, assetCode string) (*ReconcileJob, error)
 	CreateDiffs(ctx context.Context, diffs []*ReconcileDiff) error
 	ListDiffs(ctx context.Context, jobID string) ([]*ReconcileDiff, error)
-	ResolveDiff(ctx context.Context, diffID, note string) error
+	ListOpenDiffs(ctx context.Context, tenantID string, limit int) ([]*ReconcileDiff, error)
+	ResolveDiff(ctx context.Context, diffID, note, operator string) error
 }
 
 type IdempotencyRepository interface {
@@ -66,6 +67,21 @@ type IdempotencyRepository interface {
 type AuditRepository interface {
 	Create(ctx context.Context, a *GatewayAudit) error
 	List(ctx context.Context, limit int) ([]*GatewayAudit, error)
+}
+
+type AlertRepository interface {
+	Create(ctx context.Context, a *LimitAlert) error
+	List(ctx context.Context, tenantID string, limit int) ([]*LimitAlert, error)
+}
+
+type OpsAuditRepository interface {
+	Create(ctx context.Context, a *OpsAudit) error
+	List(ctx context.Context, tenantID string, limit int) ([]*OpsAudit, error)
+}
+
+type OpsRunRepository interface {
+	Save(ctx context.Context, run *OpsRun) error
+	List(ctx context.Context, limit int) ([]*OpsRun, error)
 }
 
 type JournalRepository interface {

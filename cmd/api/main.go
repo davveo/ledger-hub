@@ -65,7 +65,7 @@ func main() {
 	tx := persistence.NewClusterTxManager(cluster)
 	acl := bootstrap.ACL(cfg.ACL)
 	limitRules := bootstrap.Limits(cfg.Limits)
-	limiter := application.NewLimiter(limitRules, repos.Limit)
+	limiter := application.NewLimiter(limitRules, repos.Limit).WithAlerts(repos.Alert)
 	assetSvc := application.NewAssetService(repos.Asset)
 	accountSvc := application.NewAccountService(repos.Asset, repos.Account)
 	books := application.NewBookkeeping(tx, repos.Asset, repos.Account, repos.Entry, repos.Freeze, repos.Idempotency, acl).
@@ -77,6 +77,17 @@ func main() {
 		WithOutput(cfg.App.ReconcileDir)
 	fxSvc := application.NewFxService(repos.FxRate)
 	tenantSvc := application.NewTenantService(repos.Tenant)
+	expire := application.NewExpireEngine(repos.Asset, repos.Account, repos.Entry, books)
+	feeds := make([]domain.FxFeedPair, 0, len(cfg.Worker.FxFeed))
+	for _, p := range cfg.Worker.FxFeed {
+		feeds = append(feeds, domain.FxFeedPair{TenantID: p.TenantID, BaseAsset: p.BaseAsset, QuoteAsset: p.QuoteAsset, Rate: p.Rate})
+	}
+	jobs := application.NewJobs(books, recon, expire, repos.Freeze, cfg.App.DefaultTenant).
+		WithFx(fxSvc, feeds).
+		WithTenants(repos.Tenant).
+		WithIdempotency(repos.Idempotency, cfg.Worker.IdempotencyRetain).
+		WithRuns(repos.OpsRun).
+		WithAudit(repos.OpsAudit)
 	_ = tenantSvc.Save(context.Background(), &domain.Tenant{
 		TenantID: cfg.App.DefaultTenant,
 		Name:     "默认租户",
@@ -100,7 +111,9 @@ func main() {
 
 	srv := httpserver.New(assetSvc, accountSvc, books, query, recon, cfg.App.DefaultTenant).
 		WithPhase3(fxSvc, tenantSvc, limitRules).
-		WithOps(acl, limiter, reload)
+		WithOps(acl, limiter, reload).
+		WithJobs(jobs).
+		WithAuditLog(repos.Audit)
 	if err := httpserver.Serve(cfg.HTTP.APIAddr, srv.Engine(), cfg.HTTP.ReadTimeout, cfg.HTTP.WriteTimeout, cfg.HTTP.ShutdownTimeout, zapLog); err != nil {
 		zapLog.Fatal("api exit", zap.Error(err))
 	}

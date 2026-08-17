@@ -25,6 +25,8 @@ type Server struct {
 	limiter  *application.Limiter
 	reload   func() error
 	tenant   string
+	jobs     *application.Jobs
+	audit    domain.AuditRepository
 }
 
 func New(assets *application.AssetService, accounts *application.AccountService, books *application.Bookkeeping, query *application.QueryService, recon *application.ReconcileService, defaultTenant string) *Server {
@@ -48,6 +50,16 @@ func (s *Server) WithOps(acl *application.ACL, limiter *application.Limiter, rel
 	return s
 }
 
+func (s *Server) WithJobs(jobs *application.Jobs) *Server {
+	s.jobs = jobs
+	return s
+}
+
+func (s *Server) WithAuditLog(a domain.AuditRepository) *Server {
+	s.audit = a
+	return s
+}
+
 func (s *Server) Engine() *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery(), requestID(), accessLog())
@@ -66,6 +78,7 @@ func (s *Server) Engine() *gin.Engine {
 		g.POST("/accounts/open", s.openAccount)
 		g.GET("/accounts", s.getAccount)
 		g.GET("/accounts/:account_id", s.getAccountByID)
+		g.GET("/accounts/:account_id/entries", s.listAccountEntries)
 		g.POST("/accounts/:account_id/disable", s.setAccountStatus(domain.AccountDisabled))
 		g.POST("/accounts/:account_id/enable", s.setAccountStatus(domain.AccountActive))
 
@@ -95,6 +108,12 @@ func (s *Server) Engine() *gin.Engine {
 		g.POST("/tenants/:id/enable", s.setTenantStatus("active"))
 
 		g.POST("/ops/reload", s.reloadConfig)
+		g.GET("/ops/jobs", s.listOpsJobs)
+		g.GET("/ops/jobs/expire/preview", s.expirePreview)
+		g.POST("/ops/jobs/:name", s.runOpsJob)
+		g.GET("/ops/audits", s.listGatewayAudits)
+		g.GET("/ops/actions", s.listOpsActions)
+		g.GET("/ops/alerts", s.listLimitAlerts)
 		g.GET("/openapi.yaml", s.openapiSpec)
 
 		g.POST("/reconcile/jobs", s.triggerReconcile)
@@ -103,6 +122,7 @@ func (s *Server) Engine() *gin.Engine {
 		g.GET("/reconcile/reports/:date", s.getReconcileReport)
 		g.GET("/reconcile/files", s.listReconcileFiles)
 		g.GET("/reconcile/files/:name", s.getReconcileFile)
+		g.GET("/reconcile/diffs", s.listOpenDiffs)
 		g.POST("/reconcile/diffs/:id/resolve", s.resolveDiff)
 
 		g.GET("/console/overview", s.consoleOverview)
@@ -290,6 +310,9 @@ func (s *Server) handleCommand(c *gin.Context, forced domain.Command) {
 		fail(c, err)
 		return
 	}
+	if s.jobs != nil && (req.Command == domain.CmdReverse || req.Command == domain.CmdCapture || req.Command == domain.CmdRelease) {
+		s.jobs.Record(c.Request.Context(), s.operator(c), string(req.Command), req.TenantID, req.BizNo, req.RelatedBizNo)
+	}
 	ok(c, res)
 }
 
@@ -461,6 +484,15 @@ func (s *Server) getFreeze(c *gin.Context) {
 }
 
 func (s *Server) getFreezeByBizNo(c *gin.Context) {
+	if c.Query("expired") == "1" {
+		list, err := s.query.ExpiredFreezes(c.Request.Context(), time.Now().UTC(), parsePage(c).Limit)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		ok(c, gin.H{"items": list})
+		return
+	}
 	if holderID := c.Query("holder_id"); holderID != "" {
 		holder := domain.Holder{Type: domain.HolderType(c.Query("holder_type")), ID: holderID}
 		page := parsePage(c)
@@ -470,6 +502,15 @@ func (s *Server) getFreezeByBizNo(c *gin.Context) {
 			return
 		}
 		ok(c, gin.H{"items": list, "limit": page.Limit, "offset": page.Offset})
+		return
+	}
+	if c.Query("status") == string(domain.FreezeFrozen) || c.Query("status") == "frozen" {
+		list, err := s.query.Frozen(c.Request.Context(), s.tenantID(c, ""), c.Query("asset_code"))
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		ok(c, gin.H{"items": list})
 		return
 	}
 	fz, err := s.query.FreezeByBizNo(c.Request.Context(), s.tenantID(c, ""), c.Query("biz_no"))
@@ -596,11 +637,15 @@ func (s *Server) resolveDiff(c *gin.Context) {
 		Note string `json:"note"`
 	}
 	_ = c.ShouldBindJSON(&body)
-	if err := s.recon.ResolveDiff(c.Request.Context(), c.Param("id"), body.Note); err != nil {
+	op := s.operator(c)
+	if err := s.recon.ResolveDiff(c.Request.Context(), c.Param("id"), body.Note, op); err != nil {
 		fail(c, err)
 		return
 	}
-	ok(c, gin.H{"diff_id": c.Param("id"), "status": domain.DiffStatusResolved})
+	if s.jobs != nil {
+		s.jobs.Record(c.Request.Context(), op, "resolve_diff", s.tenantID(c, ""), c.Param("id"), body.Note)
+	}
+	ok(c, gin.H{"diff_id": c.Param("id"), "status": domain.DiffStatusResolved, "resolved_by": op})
 }
 
 func (s *Server) ensureTenant(c *gin.Context, tenantID string) error {
@@ -790,7 +835,7 @@ func (s *Server) consoleOverview(c *gin.Context) {
 	}
 	var alerts []domain.LimitAlert
 	if s.limiter != nil {
-		alerts = s.limiter.Alerts()
+		alerts = s.limiter.ListAlerts(ctx, tenant, 50)
 	}
 	ok(c, gin.H{
 		"tenant_id": tenant,

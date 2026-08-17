@@ -64,6 +64,13 @@ worker:
   freeze_expire_interval: 30s
   reconcile_interval: 1h
   asset_expire_interval: 24h
+  fx_feed_interval: 1h
+  idempotency_interval: 1h
+  idempotency_retain: 192h
+  fx_feed:
+    - base_asset: BALANCE_CNY
+      quote_asset: BALANCE_USD
+      rate: "0.14000000"
 
 limits:
   rules:

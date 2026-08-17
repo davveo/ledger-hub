@@ -6,17 +6,26 @@ import (
 	"time"
 
 	"github.com/davveo/ledger-hub/internal/domain"
+	"github.com/davveo/ledger-hub/internal/infrastructure/idgen"
 )
 
 type Limiter struct {
 	mu     sync.RWMutex
 	rules  []domain.LimitRule
 	store  domain.LimitRepository
+	persist domain.AlertRepository
 	alerts []domain.LimitAlert
 }
 
 func NewLimiter(rules []domain.LimitRule, store domain.LimitRepository) *Limiter {
 	return &Limiter{rules: append([]domain.LimitRule(nil), rules...), store: store}
+}
+
+func (l *Limiter) WithAlerts(store domain.AlertRepository) *Limiter {
+	if l != nil {
+		l.persist = store
+	}
+	return l
 }
 
 func (l *Limiter) Replace(rules []domain.LimitRule) {
@@ -46,6 +55,20 @@ func (l *Limiter) Alerts() []domain.LimitAlert {
 	out := make([]domain.LimitAlert, len(l.alerts))
 	copy(out, l.alerts)
 	return out
+}
+
+func (l *Limiter) ListAlerts(ctx context.Context, tenantID string, limit int) []domain.LimitAlert {
+	if l != nil && l.persist != nil {
+		list, err := l.persist.List(ctx, tenantID, limit)
+		if err == nil && len(list) > 0 {
+			out := make([]domain.LimitAlert, 0, len(list))
+			for _, a := range list {
+				out = append(out, *a)
+			}
+			return out
+		}
+	}
+	return l.Alerts()
 }
 
 func (l *Limiter) Check(ctx context.Context, req domain.CommandRequest) error {
@@ -78,7 +101,7 @@ func (l *Limiter) Check(ctx context.Context, req domain.CommandRequest) error {
 			continue
 		}
 		if r.MaxAmount > 0 && amt > r.MaxAmount {
-			l.note(req, "超过单笔限额")
+			l.note(ctx, req, "超过单笔限额")
 			return domain.ErrRateLimited
 		}
 		sum, count, err := l.store.AddUsage(ctx, req.TenantID, req.SourceSystem, req.Holder.ID, asset, req.Command, date, amt)
@@ -86,19 +109,20 @@ func (l *Limiter) Check(ctx context.Context, req domain.CommandRequest) error {
 			return err
 		}
 		if r.DailyAmount > 0 && sum > r.DailyAmount {
-			l.note(req, "超过日累计金额")
+			l.note(ctx, req, "超过日累计金额")
 			return domain.ErrRateLimited
 		}
 		if r.DailyCount > 0 && count > r.DailyCount {
-			l.note(req, "超过日累计笔数")
+			l.note(ctx, req, "超过日累计笔数")
 			return domain.ErrRateLimited
 		}
 	}
 	return nil
 }
 
-func (l *Limiter) note(req domain.CommandRequest, reason string) {
+func (l *Limiter) note(ctx context.Context, req domain.CommandRequest, reason string) {
 	alert := domain.LimitAlert{
+		AlertID:      idgen.New("alt_"),
 		At:           time.Now().UTC(),
 		TenantID:     req.TenantID,
 		SourceSystem: req.SourceSystem,
@@ -112,5 +136,9 @@ func (l *Limiter) note(req domain.CommandRequest, reason string) {
 	if len(l.alerts) > 50 {
 		l.alerts = l.alerts[len(l.alerts)-50:]
 	}
+	persist := l.persist
 	l.mu.Unlock()
+	if persist != nil {
+		_ = persist.Create(ctx, &alert)
+	}
 }

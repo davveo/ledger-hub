@@ -54,9 +54,25 @@
     .b-disabled, .b-failed, .b-open, .b-missing { background: rgba(251,113,133,.15); color: var(--rose); }
     .b-frozen, .b-running { background: rgba(251,191,36,.15); color: var(--amber); }
     .b-released { background: rgba(148,163,184,.15); color: var(--muted); }
-    .toast { position: fixed; right: 18px; bottom: 18px; background: #1e293b; border: 1px solid #334155; padding: 10px 14px; border-radius: 10px; max-width: 420px; display: none; font-size: 13px; z-index: 9; }
+    .toast { position: fixed; right: 18px; bottom: 18px; background: #1e293b; border: 1px solid #334155; padding: 10px 14px; border-radius: 10px; max-width: 420px; display: none; font-size: 13px; z-index: 30; box-shadow: 0 16px 40px rgba(0,0,0,.35); }
     .toast.show { display: block; }
     .toast.err { border-color: var(--rose); }
+    .modal-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: rgba(2,6,23,.76); backdrop-filter: blur(5px); opacity: 0; visibility: hidden; transition: opacity .16s ease, visibility .16s ease; }
+    .modal-backdrop.show { opacity: 1; visibility: visible; }
+    .modal { width: min(440px, 100%); overflow: hidden; background: linear-gradient(145deg, #111c32, #0f172a); border: 1px solid #334155; border-radius: 16px; box-shadow: 0 28px 80px rgba(0,0,0,.55); transform: translateY(10px) scale(.98); transition: transform .18s ease; }
+    .modal-backdrop.show .modal { transform: translateY(0) scale(1); }
+    .modal-head { display: flex; gap: 12px; align-items: flex-start; padding: 20px 20px 8px; }
+    .modal-icon { flex: 0 0 auto; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: rgba(34,211,238,.12); color: var(--cyan); font-size: 18px; }
+    .modal.danger .modal-icon { background: rgba(251,113,133,.13); color: var(--rose); }
+    .modal-copy { min-width: 0; flex: 1; }
+    .modal-title { margin: 0; color: #f8fafc; font-size: 16px; font-weight: 600; }
+    .modal-message { margin: 7px 0 0; color: var(--muted); font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+    .modal-body { padding: 12px 20px 4px; }
+    .modal-body input { width: 100%; min-width: 0; }
+    .modal-hint { margin: 7px 2px 0; color: var(--muted); font-size: 11px; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 9px; padding: 18px 20px 20px; }
+    .modal-actions button { min-width: 76px; }
+    .modal-actions .danger-btn { background: #be123c; }
     .login { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
     .login .card { width: min(420px, 100%); }
     .hidden { display: none !important; }
@@ -71,9 +87,12 @@
       <span class="dot"></span>
       <div><h1>Ledger Hub 后台</h1><p>运营控制台</p></div>
     </div>
-    <p class="muted">经网关访问时填写 <code>gateway.console_token</code>（本地默认 <code>dev-console-token</code>）。直连 API :8080 可不填。</p>
+    <p class="muted">经网关访问时填写 <code>gateway.console_token</code>（本地默认 <code>dev-console-token</code>）。直连 API :8080 可不填。操作人会写入冲正 / 关差异 / 作业审计。</p>
     <div class="row" style="margin-top:12px">
       <input id="loginToken" placeholder="X-Console-Token" style="flex:1;min-width:0"/>
+    </div>
+    <div class="row">
+      <input id="loginOp" placeholder="操作人，如 ops_zhang" style="flex:1;min-width:0"/>
       <button onclick="unlock()">进入</button>
     </div>
   </div>
@@ -93,6 +112,8 @@
       <a href="#/freezes" data-page="freezes">冻结单</a>
       <a href="#/fx" data-page="fx">汇率</a>
       <a href="#/reconcile" data-page="reconcile">对账</a>
+      <a href="#/jobs" data-page="jobs">作业</a>
+      <a href="#/audit" data-page="audit">审计</a>
       <a href="#/risk" data-page="risk">风控</a>
     </nav>
   </aside>
@@ -100,17 +121,38 @@
     <header class="top">
       <h2 id="title">概览</h2>
       <select id="tenantSel" onchange="onTenant()"></select>
+      <input id="operator" placeholder="操作人" style="min-width:120px"/>
       <input id="token" placeholder="Console Token" style="min-width:180px"/>
-      <button class="ghost" onclick="saveToken()">保存 Token</button>
+      <button class="ghost" onclick="saveSession()">保存</button>
     </header>
     <div class="content" id="view"></div>
   </section>
 </div>
 <div id="toast" class="toast"></div>
+<div id="modalBackdrop" class="modal-backdrop" aria-hidden="true">
+  <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="modalMessage">
+    <div class="modal-head">
+      <div id="modalIcon" class="modal-icon" aria-hidden="true">✓</div>
+      <div class="modal-copy">
+        <h3 id="modalTitle" class="modal-title"></h3>
+        <p id="modalMessage" class="modal-message"></p>
+      </div>
+    </div>
+    <div id="modalBody" class="modal-body hidden">
+      <input id="modalInput" autocomplete="off"/>
+      <p id="modalHint" class="modal-hint"></p>
+    </div>
+    <div class="modal-actions">
+      <button id="modalCancel" class="ghost" type="button">取消</button>
+      <button id="modalConfirm" type="button">确认</button>
+    </div>
+  </div>
+</div>
 <script>
 const TOKEN_KEY = 'ledger_console_token';
 const TENANT_KEY = 'ledger_console_tenant';
-const titles = {dashboard:'概览', assets:'资产', tenants:'租户', accounts:'账户', entries:'流水', freezes:'冻结单', fx:'汇率', reconcile:'对账', risk:'风控'};
+const OP_KEY = 'ledger_console_operator';
+const titles = {dashboard:'概览', assets:'资产', tenants:'租户', accounts:'账户', entries:'流水', freezes:'冻结单', fx:'汇率', reconcile:'对账', jobs:'作业', audit:'审计', risk:'风控'};
 let overview = {};
 let entryOffset = 0;
 const entryLimit = 50;
@@ -138,6 +180,52 @@ function toast(msg, err) {
   clearTimeout(toast._t);
   toast._t = setTimeout(() => el.classList.remove('show'), 3200);
 }
+function openModal(opt) {
+  const backdrop = $('modalBackdrop');
+  const modal = $('modal');
+  const input = $('modalInput');
+  const hasInput = opt.input !== undefined;
+  $('modalTitle').textContent = opt.title || '请确认';
+  $('modalMessage').textContent = opt.message || '';
+  $('modalIcon').textContent = opt.danger ? '!' : (hasInput ? '¥' : '✓');
+  $('modalBody').classList.toggle('hidden', !hasInput);
+  $('modalHint').textContent = opt.hint || '';
+  input.value = hasInput ? String(opt.input || '') : '';
+  input.placeholder = opt.placeholder || '';
+  modal.classList.toggle('danger', !!opt.danger);
+  $('modalConfirm').className = opt.danger ? 'danger-btn' : '';
+  $('modalConfirm').textContent = opt.confirmText || '确认';
+  backdrop.setAttribute('aria-hidden', 'false');
+  backdrop.classList.add('show');
+  return new Promise(resolve => {
+    let done = false;
+    const finish = value => {
+      if (done) return;
+      done = true;
+      backdrop.classList.remove('show');
+      backdrop.setAttribute('aria-hidden', 'true');
+      document.removeEventListener('keydown', onKey);
+      backdrop.removeEventListener('click', onBackdrop);
+      setTimeout(() => resolve(value), 120);
+    };
+    const onKey = e => {
+      if (e.key === 'Escape') finish(null);
+      if (e.key === 'Enter' && !e.isComposing) finish(hasInput ? input.value : true);
+    };
+    const onBackdrop = e => { if (e.target === backdrop) finish(null); };
+    $('modalCancel').onclick = () => finish(null);
+    $('modalConfirm').onclick = () => finish(hasInput ? input.value : true);
+    document.addEventListener('keydown', onKey);
+    backdrop.addEventListener('click', onBackdrop);
+    requestAnimationFrame(() => (hasInput ? input : $('modalConfirm')).focus());
+  });
+}
+function confirmDialog(title, message, opt) {
+  return openModal(Object.assign({title, message}, opt || {}));
+}
+function promptDialog(title, message, opt) {
+  return openModal(Object.assign({title, message, input: ''}, opt || {}));
+}
 function headers(json) {
   const h = {};
   if (json) h['Content-Type'] = 'application/json';
@@ -145,7 +233,28 @@ function headers(json) {
   if (t) h['X-Console-Token'] = t;
   const tenant = localStorage.getItem(TENANT_KEY);
   if (tenant) h['X-Tenant-Id'] = tenant;
+  const op = localStorage.getItem(OP_KEY);
+  if (op) h['X-Operator'] = op;
   return h;
+}
+function prec(asset) {
+  const a = (overview.assets || []).find(x => v(x, 'asset_code') === asset);
+  const p = a ? Number(v(a, 'precision')) : 0;
+  return Number.isFinite(p) && p > 0 ? p : 0;
+}
+function fmtAmt(asset, raw) {
+  if (raw == null || raw === '') return '';
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return String(raw);
+  const p = prec(asset);
+  if (p <= 0) return String(Math.trunc(n));
+  const neg = n < 0;
+  const abs = Math.abs(Math.trunc(n));
+  let scale = 1;
+  for (let i = 0; i < p; i++) scale *= 10;
+  const whole = Math.floor(abs / scale);
+  const frac = String(abs % scale).padStart(p, '0');
+  return (neg ? '-' : '') + whole + '.' + frac;
 }
 async function api(path, opt) {
   const r = await fetch(path, Object.assign({headers: headers(opt && opt.body)}, opt || {}));
@@ -179,16 +288,20 @@ function showLogin() {
   $('login').classList.remove('hidden');
   $('app').classList.add('hidden');
   $('loginToken').value = localStorage.getItem(TOKEN_KEY) || 'dev-console-token';
+  if ($('loginOp')) $('loginOp').value = localStorage.getItem(OP_KEY) || 'console';
 }
 function unlock() {
   localStorage.setItem(TOKEN_KEY, $('loginToken').value.trim());
+  localStorage.setItem(OP_KEY, ($('loginOp') && $('loginOp').value.trim()) || 'console');
   boot();
 }
-function saveToken() {
+function saveSession() {
   localStorage.setItem(TOKEN_KEY, $('token').value.trim());
-  toast('Token 已保存');
+  localStorage.setItem(OP_KEY, ($('operator') && $('operator').value.trim()) || 'console');
+  toast('已保存 Token / 操作人');
   loadOverview().then(render);
 }
+function saveToken() { saveSession(); }
 function onTenant() {
   localStorage.setItem(TENANT_KEY, $('tenantSel').value);
   loadOverview().then(render);
@@ -216,13 +329,16 @@ function render() {
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.page === p));
   $('title').textContent = titles[p] || '概览';
   const fn = ({dashboard: viewDash, assets: viewAssets, tenants: viewTenants, accounts: viewAccounts,
-    entries: viewEntries, freezes: viewFreezes, fx: viewFx, reconcile: viewRecon, risk: viewRisk})[p] || viewDash;
+    entries: viewEntries, freezes: viewFreezes, fx: viewFx, reconcile: viewRecon, jobs: viewJobs,
+    audit: viewAudit, risk: viewRisk})[p] || viewDash;
   $('view').innerHTML = fn();
   const run = (f) => f().catch(e => toast(e.message || String(e), true));
   if (p === 'entries') run(() => searchEntries(false));
   if (p === 'accounts') run(() => searchAccounts());
-  if (p === 'freezes') run(() => searchFreezes());
+  if (p === 'freezes') run(() => loadFreezeQueues());
   if (p === 'reconcile') run(() => refreshRecon());
+  if (p === 'jobs') run(() => loadJobs());
+  if (p === 'audit') run(() => loadAudit());
 }
 
 function viewDash() {
@@ -241,7 +357,7 @@ function viewDash() {
       alerts.slice(0, 8)
     )}</div>
     <div class="card"><h3>资产</h3>${table(
-      [{label:'代码', key:'asset_code', mono:true}, {label:'名称', key:'name'}, {label:'类型', key:'asset_class'}, {label:'状态', html:true, value: r => badge(v(r,'status'))}],
+      [{label:'代码', key:'asset_code', mono:true}, {label:'名称', key:'name'}, {label:'类型', key:'asset_class'}, {label:'精度', key:'precision'}, {label:'状态', html:true, value: r => badge(v(r,'status'))}],
       (d.assets||[]).slice(0, 8)
     )}</div>`;
 }
@@ -341,14 +457,51 @@ function viewFreezes() {
     <div class="card">
       <h3>按持有人列冻结单</h3>
       <div class="row">
-        <input id="fHolder" placeholder="holder_id"/>
+        <input id="fHolder" placeholder="holder_id 如 u_alice"/>
         <select id="fType"><option>user</option><option>merchant</option></select>
         <input id="fAsset" placeholder="asset_code 可空"/>
         <select id="fStatus"><option value="">全部状态</option><option>frozen</option><option>captured</option><option>released</option></select>
         <button onclick="searchFreezes()">查询</button>
+        <button class="ghost" onclick="loadFreezeQueues()">刷新队列</button>
       </div>
+      <p class="muted">确认走 order Capture；取消走 order Release；超时释放走 worker Release。金额按资产精度展示。</p>
     </div>
-    <div class="card"><h3>冻结单</h3><div id="fzTable"></div></div>`;
+    <div class="card"><h3>过期待释放</h3><div id="fzExpired"><p class="muted">加载中…</p></div></div>
+    <div class="card"><h3>在途冻结</h3><div id="fzFrozen"><p class="muted">加载中…</p></div></div>
+    <div class="card"><h3>检索结果</h3><div id="fzTable"></div></div>`;
+}
+
+function viewJobs() {
+  const nextYear = new Date().getUTCFullYear() + 1;
+  return `
+    <div class="card">
+      <h3>手动触发 Worker 作业</h3>
+      <div class="row">
+        <button onclick="runJob('release_expired')">释放过期冻结</button>
+        <button onclick="runJob('reconcile')">日终对账</button>
+        <button onclick="runJob('expire')">资产过期入账</button>
+        <button onclick="runJob('fx_feed')">汇率 Feed</button>
+        <button class="ghost" onclick="runJob('idempotency')">清理幂等</button>
+      </div>
+      <p class="muted">结果写入作业记录。过期入账仅在策略命中时过账；试算不记账。</p>
+    </div>
+    <div class="card">
+      <h3>过期试算</h3>
+      <div class="row">
+        <input id="expireAsOf" placeholder="YYYY-MM-DD" value="${nextYear}-01-01"/>
+        <button class="ghost" onclick="loadExpirePreview()">试算</button>
+      </div>
+      <div id="expirePreview"></div>
+    </div>
+    <div class="card"><h3>最近作业结果</h3><div id="opsJobTable"><p class="muted">加载中…</p></div></div>`;
+}
+
+function viewAudit() {
+  return `
+    <div class="card"><h3>网关审计</h3><div id="gwAuditTable"><p class="muted">加载中…</p></div></div>
+    <div class="card"><h3>运营操作</h3><p class="muted">冲正、Capture/Release、关差异、手动作业会记操作人。</p>
+      <div id="opsActionTable"></div></div>
+    <div class="card"><h3>限额告警（落库）</h3><div id="alertTable"></div></div>`;
 }
 
 function viewFx() {
@@ -386,14 +539,16 @@ function viewRecon() {
       <p class="muted">不传业务清单也会跑 L2 余额勾稽、L3 冻结、L4 兑换完整性。</p>
     </div>
     <div class="card"><h3>最近任务</h3><div id="jobTable"></div></div>
-    <div class="card"><h3>差异工单</h3>
+    <div class="card"><h3>待关闭差异</h3>
       <div class="row">
         <input id="diffId" placeholder="diff_id"/>
         <input id="diffNote" placeholder="关闭说明"/>
         <button onclick="resolveDiff()">关闭差异</button>
+        <button class="ghost" onclick="loadOpenDiffs()">刷新待关闭</button>
       </div>
-      <div id="diffTable"></div>
+      <div id="openDiffTable"><p class="muted">加载中…</p></div>
     </div>
+    <div class="card"><h3>报告内差异</h3><div id="diffTable"></div></div>
     <div class="card"><h3>对账文件</h3><div id="fileTable"></div></div>
     <div class="card"><h3>摘要</h3><pre id="reconSum" class="muted mono">尚未加载</pre></div>`;
 }
@@ -413,7 +568,8 @@ function viewRisk() {
     )}</div>
     <div class="card"><h3>限额规则</h3>${table(
       [{label:'租户', key:'tenant_id'}, {label:'系统', key:'source_system'}, {label:'资产', key:'asset_code'}, {label:'命令', key:'command'},
-       {label:'单笔上限', key:'max_amount'}, {label:'日累计', key:'daily_amount'}, {label:'日笔数', key:'daily_count'}],
+       {label:'单笔上限', html:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'max_amount')))},
+       {label:'日累计', html:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'daily_amount')))}, {label:'日笔数', key:'daily_count'}],
       overview.limits || []
     )}</div>
     <div class="card"><h3>超限告警</h3>${table(
@@ -464,7 +620,9 @@ async function searchAccounts() {
   const rows = Array.isArray(j.data) ? j.data : (j.data ? [j.data] : []);
   $('accTable').innerHTML = table(
     [{label:'账户', key:'account_id', mono:true}, {label:'持有人', key:'holder_id', mono:true}, {label:'类型', key:'holder_type'},
-     {label:'资产', key:'asset_code'}, {label:'可用', key:'available', mono:true}, {label:'冻结', key:'frozen', mono:true},
+     {label:'资产', key:'asset_code'},
+     {label:'可用', html:true, mono:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'available')))},
+     {label:'冻结', html:true, mono:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'frozen')))},
      {label:'状态', html:true, value: r => badge(v(r,'status'))}],
     rows,
     r => {
@@ -512,8 +670,11 @@ async function searchEntries(keep) {
   if (!$('entryTable')) return;
   $('entryTable').innerHTML = table(
     [{label:'时间', key:'created_at'}, {label:'命令', key:'command'}, {label:'方向', key:'direction'},
-     {label:'资产', key:'asset_code'}, {label:'金额', key:'amount', mono:true}, {label:'biz_no', key:'biz_no', mono:true},
-     {label:'journal', key:'journal_id', mono:true}, {label:'余额后', key:'available_after', mono:true}],
+     {label:'资产', key:'asset_code'},
+     {label:'金额', html:true, mono:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'amount')))},
+     {label:'biz_no', key:'biz_no', mono:true},
+     {label:'journal', key:'journal_id', mono:true},
+     {label:'余额后', html:true, mono:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'available_after')))}],
     rows,
     r => `<button class="ghost" onclick="showJournal('${esc(v(r,'journal_id'))}')">凭证</button>
           <button class="ghost" onclick="prepReverse('${esc(v(r,'biz_no'))}','${esc(v(r,'source_system'))}')">冲正</button>`
@@ -543,17 +704,79 @@ async function doReverse() {
 }
 
 async function searchFreezes() {
-  if (!$('fHolder') || !$('fHolder').value) { if ($('fzTable')) $('fzTable').innerHTML = '<p class="muted">填写 holder_id</p>'; return; }
+  if (!$('fHolder') || !$('fHolder').value) { if ($('fzTable')) $('fzTable').innerHTML = '<p class="muted">填写 holder_id 后查询，或看上方队列</p>'; return; }
   const q = new URLSearchParams({holder_id: $('fHolder').value, holder_type: $('fType').value});
   if ($('fAsset').value) q.set('asset_code', $('fAsset').value);
   if ($('fStatus').value) q.set('status', $('fStatus').value);
   const j = await api('/api/v1/ledger/freezes?' + q.toString());
   const rows = (j.data && j.data.items) || (Array.isArray(j.data) ? j.data : []);
-  $('fzTable').innerHTML = table(
-    [{label:'Freeze ID', key:'freeze_id', mono:true}, {label:'biz_no', key:'biz_no', mono:true}, {label:'资产', key:'asset_code'},
-     {label:'金额', key:'amount', mono:true}, {label:'状态', html:true, value: r => badge(v(r,'status'))}, {label:'过期', key:'expire_at'}],
-    rows
+  $('fzTable').innerHTML = freezeTable(rows, false);
+}
+
+function freezeActions(r, expired) {
+  const st = String(v(r,'status'));
+  if (st !== 'frozen') return '';
+  const id = esc(v(r,'freeze_id'));
+  const asset = esc(v(r,'asset_code'));
+  const amt = esc(v(r,'amount'));
+  const src = expired ? 'worker' : 'order';
+  return `<button class="ok" onclick="doCapture('${id}','${asset}','${amt}')">确认</button>
+    <button class="warn" onclick="doRelease('${id}','${asset}','${src}')">释放</button>`;
+}
+function freezeTable(rows, expired) {
+  return table(
+    [{label:'Freeze ID', key:'freeze_id', mono:true}, {label:'账户', key:'account_id', mono:true}, {label:'biz_no', key:'biz_no', mono:true},
+     {label:'资产', key:'asset_code'},
+     {label:'金额', html:true, mono:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'amount')))},
+     {label:'状态', html:true, value: r => badge(v(r,'status'))}, {label:'过期', key:'expire_at'}],
+    rows,
+    r => freezeActions(r, expired)
   );
+}
+async function loadFreezeQueues() {
+  try {
+    const j = await api('/api/v1/ledger/freezes?expired=1&limit=50');
+    const rows = (j.data && j.data.items) || [];
+    if ($('fzExpired')) $('fzExpired').innerHTML = freezeTable(rows, true);
+  } catch (e) { if ($('fzExpired')) $('fzExpired').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
+  try {
+    const j = await api('/api/v1/ledger/freezes?status=frozen');
+    const rows = (j.data && j.data.items) || [];
+    if ($('fzFrozen')) $('fzFrozen').innerHTML = freezeTable(rows, false);
+  } catch (e) { if ($('fzFrozen')) $('fzFrozen').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
+  if ($('fHolder') && $('fHolder').value) searchFreezes().catch(e => toast(e.message, true));
+}
+async function doCapture(freezeId, asset, maxAmt) {
+  const hint = fmtAmt(asset, maxAmt) + '（最小单位 ' + maxAmt + '）';
+  const raw = await promptDialog('确认冻结金额', '请输入本次确认金额，留空将确认整单。', {
+    placeholder: '留空表示整单确认',
+    hint: '当前冻结：' + hint,
+    confirmText: '确认入账'
+  });
+  if (raw == null) return;
+  const body = {
+    source_system: 'order', biz_type: 'ops_capture',
+    biz_no: 'ops:capture:' + freezeId + ':' + Date.now(),
+    freeze_id: freezeId, asset_code: asset
+  };
+  if (String(raw).trim()) body.amount = String(raw).trim();
+  const j = await api('/api/v1/ledger/commands/capture', {method:'POST', body: JSON.stringify(body)});
+  toast('已确认 ' + (j.data && j.data.freeze_id || freezeId));
+  loadFreezeQueues();
+}
+async function doRelease(freezeId, asset, src) {
+  const confirmed = await confirmDialog('释放冻结金额', '释放后，冻结金额将退回账户可用余额。\n冻结单：' + freezeId, {
+    danger: true,
+    confirmText: '确认释放'
+  });
+  if (!confirmed) return;
+  const j = await api('/api/v1/ledger/commands/release', {method:'POST', body: JSON.stringify({
+    source_system: src || 'order', biz_type: src === 'worker' ? 'freeze_expire' : 'ops_release',
+    biz_no: 'ops:release:' + freezeId + ':' + Date.now(),
+    freeze_id: freezeId, asset_code: asset
+  })});
+  toast('已释放 ' + (j.data && j.data.freeze_id || freezeId));
+  loadFreezeQueues();
 }
 
 async function saveRate() {
@@ -565,6 +788,7 @@ async function saveRate() {
 }
 
 async function refreshRecon() {
+  await loadOpenDiffs();
   try {
     const jobs = await api('/api/v1/ledger/reconcile/jobs?limit=20');
     const list = jobs.data || [];
@@ -584,6 +808,22 @@ async function refreshRecon() {
       r => `<a href="/api/v1/ledger/reconcile/files/${encodeURIComponent(v(r,'name'))}?console_token=${encodeURIComponent(tok)}" target="_blank">下载</a>`
     );
   } catch (e) { $('fileTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
+}
+async function loadOpenDiffs() {
+  if (!$('openDiffTable')) return;
+  try {
+    const j = await api('/api/v1/ledger/reconcile/diffs?limit=50');
+    const rows = j.data || [];
+    $('openDiffTable').innerHTML = table(
+      [{label:'Diff', key:'diff_id', mono:true}, {label:'类型', key:'kind'}, {label:'biz_no', key:'biz_no', mono:true},
+       {label:'资产', key:'asset_code'},
+       {label:'业务金额', html:true, mono:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'biz_amount')))},
+       {label:'账本金额', html:true, mono:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'ledger_amount')))},
+       {label:'状态', html:true, value: r => badge(v(r,'status'))}],
+      rows,
+      r => v(r,'status') === 'open' ? `<button class="ghost" onclick="fillDiff('${esc(v(r,'diff_id'))}')">选用</button>` : ''
+    );
+  } catch (e) { $('openDiffTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
 }
 async function runRecon() {
   const body = {date: $('reconDate').value, source_system: $('reconSys').value, asset_code: $('reconAsset').value};
@@ -610,7 +850,9 @@ function showReport(data) {
   const diffs = (data && data.diffs) || [];
   $('diffTable').innerHTML = table(
     [{label:'Diff', key:'diff_id', mono:true}, {label:'类型', key:'kind'}, {label:'biz_no', key:'biz_no', mono:true},
-     {label:'业务金额', key:'biz_amount'}, {label:'账本金额', key:'ledger_amount'}, {label:'状态', html:true, value: r => badge(v(r,'status'))}],
+     {label:'业务金额', html:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'biz_amount')))},
+     {label:'账本金额', html:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'ledger_amount')))},
+     {label:'状态', html:true, value: r => badge(v(r,'status'))}],
     diffs,
     r => v(r,'status') === 'open' ? `<button class="ghost" onclick="fillDiff('${esc(v(r,'diff_id'))}')">选用</button>` : ''
   );
@@ -621,6 +863,7 @@ async function resolveDiff() {
     method:'POST', body: JSON.stringify({note: $('diffNote').value})
   });
   toast('差异已关闭');
+  loadOpenDiffs().catch(() => {});
   if ($('reconDate').value) loadReport().catch(() => {});
 }
 
@@ -632,11 +875,71 @@ async function reloadCfg() {
   render();
 }
 
+async function loadJobs() {
+  try {
+    const j = await api('/api/v1/ledger/ops/jobs?limit=20');
+    if ($('opsJobTable')) $('opsJobTable').innerHTML = table(
+      [{label:'Run', key:'run_id', mono:true}, {label:'作业', key:'name'}, {label:'状态', html:true, value: r => badge(v(r,'status'))},
+       {label:'笔数', key:'count'}, {label:'详情', key:'detail'}, {label:'开始', key:'started_at'}, {label:'结束', key:'finished_at'}],
+      j.data || []
+    );
+  } catch (e) { if ($('opsJobTable')) $('opsJobTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
+  loadExpirePreview().catch(() => {});
+}
+async function runJob(name) {
+  const body = name === 'reconcile' ? JSON.stringify({date: new Date().toISOString().slice(0,10)}) : '{}';
+  const j = await api('/api/v1/ledger/ops/jobs/' + encodeURIComponent(name), {method:'POST', body});
+  const run = j.data || {};
+  toast((run.name || name) + ' ' + (run.status || '') + ' count=' + (run.count || 0));
+  loadJobs();
+}
+async function loadExpirePreview() {
+  if (!$('expirePreview')) return;
+  const asOf = $('expireAsOf') && $('expireAsOf').value;
+  const q = asOf ? ('?as_of=' + encodeURIComponent(asOf)) : '';
+  const j = await api('/api/v1/ledger/ops/jobs/expire/preview' + q);
+  const rows = j.data || [];
+  $('expirePreview').innerHTML = table(
+    [{label:'持有人', key:'holder_id', mono:true}, {label:'账户', key:'account_id', mono:true}, {label:'资产', key:'asset_code'},
+     {label:'将过期', html:true, mono:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'amount')))},
+     {label:'策略', key:'policy'}],
+    rows
+  );
+}
+
+async function loadAudit() {
+  try {
+    const j = await api('/api/v1/ledger/ops/audits?limit=50');
+    if ($('gwAuditTable')) $('gwAuditTable').innerHTML = table(
+      [{label:'时间', key:'created_at'}, {label:'Client', key:'client_id'}, {label:'方法', key:'method'},
+       {label:'路径', key:'path', mono:true}, {label:'状态', key:'status'}, {label:'来源', key:'remote_addr'}],
+      j.data || []
+    );
+  } catch (e) { if ($('gwAuditTable')) $('gwAuditTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
+  try {
+    const j = await api('/api/v1/ledger/ops/actions?limit=50');
+    if ($('opsActionTable')) $('opsActionTable').innerHTML = table(
+      [{label:'时间', key:'created_at'}, {label:'操作人', key:'operator'}, {label:'动作', key:'action'},
+       {label:'目标', key:'target', mono:true}, {label:'详情', key:'detail'}],
+      j.data || []
+    );
+  } catch (e) { if ($('opsActionTable')) $('opsActionTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
+  try {
+    const j = await api('/api/v1/ledger/ops/alerts?limit=50');
+    if ($('alertTable')) $('alertTable').innerHTML = table(
+      [{label:'时间', key:'at'}, {label:'系统', key:'source_system'}, {label:'持有人', key:'holder_id', mono:true},
+       {label:'资产', key:'asset_code'}, {label:'命令', key:'command'}, {label:'原因', key:'reason'}],
+      j.data || []
+    );
+  } catch (e) { if ($('alertTable')) $('alertTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
+}
+
 window.addEventListener('hashchange', () => { try { render(); } catch (e) { toast(e.message, true); } });
 window.addEventListener('unhandledrejection', ev => toast(String(ev.reason && ev.reason.message || ev.reason), true));
 
 async function boot() {
   $('token').value = localStorage.getItem(TOKEN_KEY) || '';
+  if ($('operator')) $('operator').value = localStorage.getItem(OP_KEY) || 'console';
   try {
     await loadOverview();
     $('login').classList.add('hidden');

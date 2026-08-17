@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/davveo/ledger-hub/internal/domain"
 )
@@ -60,5 +61,30 @@ func TestACLReplaceAndTenant(t *testing.T) {
 	}
 	if !acl.AllowTenant("t_a", "campaign", domain.CmdCredit, "POINT") {
 		t.Fatal("same tenant should allow")
+	}
+}
+
+func TestExpiredFreezes(t *testing.T) {
+	ctx := context.Background()
+	b, st := setupBooks(t)
+	holder := domain.Holder{Type: domain.HolderUser, ID: "u_exp_fz"}
+	if _, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdCredit, TenantID: "t_default", SourceSystem: "campaign",
+		BizNo: "campaign:expfz", Holder: holder, AssetCode: "POINT", Amount: 80,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	past := time.Now().UTC().Add(-time.Hour)
+	res, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdFreeze, TenantID: "t_default", SourceSystem: "order",
+		BizNo: "order:expfz", Holder: holder, AssetCode: "POINT", Amount: 20, ExpireAt: &past,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := NewQueryService(memEntry{st}, memFreeze{st})
+	list, err := q.ExpiredFreezes(ctx, time.Now().UTC(), 10)
+	if err != nil || len(list) != 1 || list[0].FreezeID != res.FreezeID {
+		t.Fatalf("expired=%+v err=%v want %s", list, err, res.FreezeID)
 	}
 }

@@ -115,10 +115,36 @@ func (r *ReconcileRepo) ListDiffs(ctx context.Context, jobID string) ([]*domain.
 	return out, nil
 }
 
-func (r *ReconcileRepo) ResolveDiff(ctx context.Context, diffID, note string) error {
+func (r *ReconcileRepo) ListOpenDiffs(ctx context.Context, tenantID string, limit int) ([]*domain.ReconcileDiff, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	q := dbFrom(ctx, r.db).Table("ledger_reconcile_diff AS d").
+		Select("d.*").
+		Joins("JOIN ledger_reconcile_job AS j ON j.job_id = d.job_id").
+		Where("d.status = ?", domain.DiffStatusOpen)
+	if tenantID != "" {
+		q = q.Where("j.tenant_id = ?", tenantID)
+	}
+	var rows []LedgerReconcileDiff
+	if err := q.Order("d.id desc").Limit(limit).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]*domain.ReconcileDiff, 0, len(rows))
+	for i := range rows {
+		out = append(out, diffFromModel(&rows[i]))
+	}
+	return out, nil
+}
+
+func (r *ReconcileRepo) ResolveDiff(ctx context.Context, diffID, note, operator string) error {
 	res := dbFrom(ctx, r.db).Model(&LedgerReconcileDiff{}).Where("diff_id = ?", diffID).Updates(map[string]interface{}{
-		"status": domain.DiffStatusResolved,
-		"note":   note,
+		"status":      domain.DiffStatusResolved,
+		"note":        note,
+		"resolved_by": operator,
 	})
 	if res.Error != nil {
 		return res.Error
@@ -181,5 +207,6 @@ func diffFromModel(m *LedgerReconcileDiff) *domain.ReconcileDiff {
 		AccountID:    m.AccountID,
 		Status:       m.Status,
 		Note:         m.Note,
+		ResolvedBy:   m.ResolvedBy,
 	}
 }

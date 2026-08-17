@@ -223,8 +223,19 @@ func (m *mem) UpdateStatus(_ context.Context, id string, from, to domain.FreezeS
 	f.Status = to
 	return nil
 }
-func (m *mem) ListExpired(_ context.Context, _ time.Time, _ int) ([]*domain.FreezeOrder, error) {
-	return nil, nil
+func (m *mem) ListExpired(_ context.Context, now time.Time, limit int) ([]*domain.FreezeOrder, error) {
+	var out []*domain.FreezeOrder
+	for _, f := range m.freezes {
+		if f.Status != domain.FreezeFrozen || f.ExpireAt == nil || f.ExpireAt.After(now) {
+			continue
+		}
+		cp := *f
+		out = append(out, &cp)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
 }
 func (m *mem) ListFrozen(_ context.Context, tenant, asset string) ([]*domain.FreezeOrder, error) {
 	var out []*domain.FreezeOrder

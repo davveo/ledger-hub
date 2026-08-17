@@ -24,15 +24,27 @@ type expirePolicy struct {
 	Days   int    `json:"days"`
 }
 
+func (e *ExpireEngine) Preview(ctx context.Context, tenantID string, now time.Time) ([]domain.ExpirePreview, error) {
+	return e.collect(ctx, tenantID, now, false)
+}
+
 func (e *ExpireEngine) Run(ctx context.Context, tenantID string, now time.Time) (int, error) {
-	if e == nil || e.books == nil {
-		return 0, nil
+	items, err := e.collect(ctx, tenantID, now, true)
+	return len(items), err
+}
+
+func (e *ExpireEngine) collect(ctx context.Context, tenantID string, now time.Time, apply bool) ([]domain.ExpirePreview, error) {
+	if e == nil {
+		return nil, nil
+	}
+	if apply && e.books == nil {
+		return nil, nil
 	}
 	assets, err := e.assets.List(ctx, tenantID)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	n := 0
+	var out []domain.ExpirePreview
 	for _, a := range assets {
 		pol := parseExpire(a.Ext)
 		if pol.Policy == "" {
@@ -40,7 +52,7 @@ func (e *ExpireEngine) Run(ctx context.Context, tenantID string, now time.Time) 
 		}
 		accs, err := e.accs.ListByTenant(ctx, tenantID, a.AssetCode)
 		if err != nil {
-			return n, err
+			return out, err
 		}
 		for _, acc := range accs {
 			if acc.HolderType == domain.HolderSystemSubject || acc.Available <= 0 {
@@ -48,34 +60,45 @@ func (e *ExpireEngine) Run(ctx context.Context, tenantID string, now time.Time) 
 			}
 			amt, err := e.expireAmount(ctx, acc, pol, now)
 			if err != nil {
-				return n, err
+				return out, err
 			}
 			if amt <= 0 {
 				continue
 			}
-			bizNo := "worker:expire:" + a.AssetCode + ":" + acc.HolderID + ":" + now.UTC().Format("2006-01-02")
-			sink := domain.Holder{Type: domain.HolderSystemSubject, ID: domain.SystemPointSink}
-			_, err = e.books.Execute(ctx, domain.CommandRequest{
-				Command:      domain.CmdTransfer,
-				TenantID:     tenantID,
-				SourceSystem: "worker",
-				BizType:      "expire",
-				BizNo:        bizNo,
-				Holder:       domain.Holder{Type: acc.HolderType, ID: acc.HolderID},
-				ToHolder:     &sink,
-				AssetCode:    a.AssetCode,
-				Amount:       amt,
-			})
-			if err != nil {
-				if domain.Is(err, domain.CodeIdempotencyConflict) {
-					continue
-				}
-				return n, err
+			item := domain.ExpirePreview{
+				TenantID:   tenantID,
+				HolderType: string(acc.HolderType),
+				HolderID:   acc.HolderID,
+				AccountID:  acc.AccountID,
+				AssetCode:  acc.AssetCode,
+				Amount:     amt,
+				Policy:     pol.Policy,
 			}
-			n++
+			if apply {
+				bizNo := "worker:expire:" + a.AssetCode + ":" + acc.HolderID + ":" + now.UTC().Format("2006-01-02")
+				sink := domain.Holder{Type: domain.HolderSystemSubject, ID: domain.SystemPointSink}
+				_, err = e.books.Execute(ctx, domain.CommandRequest{
+					Command:      domain.CmdTransfer,
+					TenantID:     tenantID,
+					SourceSystem: "worker",
+					BizType:      "expire",
+					BizNo:        bizNo,
+					Holder:       domain.Holder{Type: acc.HolderType, ID: acc.HolderID},
+					ToHolder:     &sink,
+					AssetCode:    a.AssetCode,
+					Amount:       amt,
+				})
+				if err != nil {
+					if domain.Is(err, domain.CodeIdempotencyConflict) {
+						continue
+					}
+					return out, err
+				}
+			}
+			out = append(out, item)
 		}
 	}
-	return n, nil
+	return out, nil
 }
 
 func (e *ExpireEngine) expireAmount(ctx context.Context, acc *domain.Account, pol expirePolicy, now time.Time) (int64, error) {

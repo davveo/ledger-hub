@@ -191,6 +191,30 @@ func (s *QueryService) FreezesByHolder(ctx context.Context, tenantID string, hol
 	return s.freezes.ListByHolder(ctx, tenantID, holder, assetCode, status, page.Clamp(50, 200))
 }
 
+func (s *QueryService) EntriesByAccount(ctx context.Context, accountID string) ([]*domain.LedgerEntry, error) {
+	if accountID == "" {
+		return nil, domain.ErrInvalidParam
+	}
+	return s.entries.ListByAccount(ctx, accountID)
+}
+
+func (s *QueryService) ExpiredFreezes(ctx context.Context, now time.Time, limit int) ([]*domain.FreezeOrder, error) {
+	if s.freezes == nil {
+		return nil, domain.ErrNotImplemented
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	return s.freezes.ListExpired(ctx, now, limit)
+}
+
+func (s *QueryService) Frozen(ctx context.Context, tenantID, assetCode string) ([]*domain.FreezeOrder, error) {
+	if s.freezes == nil {
+		return nil, domain.ErrNotImplemented
+	}
+	return s.freezes.ListFrozen(ctx, tenantID, assetCode)
+}
+
 func (s *QueryService) Journal(ctx context.Context, journalID string) (*domain.Journal, []*domain.LedgerEntry, error) {
 	if s.journals == nil {
 		return nil, nil, domain.ErrNotImplemented

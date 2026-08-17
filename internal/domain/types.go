@@ -219,6 +219,7 @@ type LimitRule struct {
 }
 
 type LimitAlert struct {
+	AlertID      string    `json:"alert_id,omitempty"`
 	At           time.Time `json:"at"`
 	TenantID     string    `json:"tenant_id"`
 	SourceSystem string    `json:"source_system"`
@@ -226,6 +227,44 @@ type LimitAlert struct {
 	AssetCode    string    `json:"asset_code"`
 	Command      Command   `json:"command"`
 	Reason       string    `json:"reason"`
+}
+
+type OpsAudit struct {
+	AuditID   string    `json:"audit_id"`
+	Operator  string    `json:"operator"`
+	Action    string    `json:"action"`
+	TenantID  string    `json:"tenant_id,omitempty"`
+	Target    string    `json:"target,omitempty"`
+	Detail    string    `json:"detail,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type OpsRun struct {
+	RunID      string     `json:"run_id"`
+	Name       string     `json:"name"`
+	TenantID   string     `json:"tenant_id,omitempty"`
+	Status     string     `json:"status"`
+	Detail     string     `json:"detail,omitempty"`
+	Count      int        `json:"count"`
+	StartedAt  time.Time  `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+}
+
+type ExpirePreview struct {
+	TenantID   string `json:"tenant_id"`
+	HolderType string `json:"holder_type"`
+	HolderID   string `json:"holder_id"`
+	AccountID  string `json:"account_id"`
+	AssetCode  string `json:"asset_code"`
+	Amount     int64  `json:"amount"`
+	Policy     string `json:"policy"`
+}
+
+type FxFeedPair struct {
+	TenantID   string `json:"tenant_id,omitempty"`
+	BaseAsset  string `json:"base_asset"`
+	QuoteAsset string `json:"quote_asset"`
+	Rate       string `json:"rate"`
 }
 
 type Page struct {
@@ -273,14 +312,14 @@ type ACLRule struct {
 }
 
 type GatewayAudit struct {
-	AuditID    string
-	ClientID   string
-	Method     string
-	Path       string
-	Status     int
-	RemoteAddr string
-	RequestID  string
-	CreatedAt  time.Time
+	AuditID    string    `json:"audit_id"`
+	ClientID   string    `json:"client_id"`
+	Method     string    `json:"method"`
+	Path       string    `json:"path"`
+	Status     int       `json:"status"`
+	RemoteAddr string    `json:"remote_addr,omitempty"`
+	RequestID  string    `json:"request_id,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 const (
@@ -347,6 +386,7 @@ type ReconcileDiff struct {
 	AccountID    string  `json:"account_id,omitempty"`
 	Status       string  `json:"status"`
 	Note         string  `json:"note,omitempty"`
+	ResolvedBy   string  `json:"resolved_by,omitempty"`
 }
 
 type CommandResult struct {

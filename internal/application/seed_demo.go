@@ -102,6 +102,13 @@ func SeedDemo(ctx context.Context, books *Bookkeeping, assets *AssetService, acc
 			return fmt.Errorf("%s %s: %w", req.Command, req.BizNo, err)
 		}
 	}
+	past := time.Now().UTC().Add(-2 * time.Hour)
+	if _, err := books.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdFreeze, TenantID: tenantID, SourceSystem: "order", BizType: "order_hold",
+		BizNo: "order:demo:alice:fz:EXPIRED", Holder: alice, AssetCode: "POINT", Amount: 100, ExpireAt: &past,
+	}); err != nil {
+		return fmt.Errorf("freeze expired demo: %w", err)
+	}
 
 	dormantAcc, err := accounts.Get(ctx, tenantID, dormant, "POINT")
 	if err != nil {

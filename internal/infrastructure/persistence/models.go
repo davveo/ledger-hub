@@ -278,6 +278,7 @@ type LedgerReconcileDiff struct {
 	AccountID    string `gorm:"size:64;index"`
 	Status       string `gorm:"size:16;index;not null"`
 	Note         string `gorm:"type:text"`
+	ResolvedBy   string `gorm:"size:64"`
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -384,3 +385,44 @@ type LedgerGatewayAudit struct {
 }
 
 func (LedgerGatewayAudit) TableName() string { return "ledger_gateway_audit" }
+
+type LedgerLimitAlert struct {
+	ID           uint64 `gorm:"primaryKey;autoIncrement"`
+	AlertID      string `gorm:"size:64;uniqueIndex;not null"`
+	TenantID     string `gorm:"size:64;index;not null"`
+	SourceSystem string `gorm:"size:64"`
+	HolderID     string `gorm:"size:64;index"`
+	AssetCode    string `gorm:"size:64"`
+	Command      string `gorm:"size:32"`
+	Reason       string `gorm:"size:128"`
+	CreatedAt    time.Time `gorm:"index"`
+}
+
+func (LedgerLimitAlert) TableName() string { return "ledger_limit_alert" }
+
+type LedgerOpsAudit struct {
+	ID        uint64 `gorm:"primaryKey;autoIncrement"`
+	AuditID   string `gorm:"size:64;uniqueIndex;not null"`
+	Operator  string `gorm:"size:64;index;not null"`
+	Action    string `gorm:"size:32;index;not null"`
+	TenantID  string `gorm:"size:64;index"`
+	Target    string `gorm:"size:128"`
+	Detail    string `gorm:"type:text"`
+	CreatedAt time.Time `gorm:"index"`
+}
+
+func (LedgerOpsAudit) TableName() string { return "ledger_ops_audit" }
+
+type LedgerOpsRun struct {
+	ID         uint64 `gorm:"primaryKey;autoIncrement"`
+	RunID      string `gorm:"size:64;uniqueIndex;not null"`
+	Name       string `gorm:"size:32;index;not null"`
+	TenantID   string `gorm:"size:64;index"`
+	Status     string `gorm:"size:16;not null"`
+	Detail     string `gorm:"type:text"`
+	Count      int
+	StartedAt  time.Time
+	FinishedAt *time.Time
+}
+
+func (LedgerOpsRun) TableName() string { return "ledger_ops_run" }
