@@ -16,7 +16,7 @@ func (s *Server) operator(c *gin.Context) string {
 }
 
 func (s *Server) listAccountEntries(c *gin.Context) {
-	list, err := s.query.EntriesByAccount(c.Request.Context(), c.Param("account_id"))
+	list, err := s.query.EntriesByAccount(c.Request.Context(), s.tenantID(c, ""), c.Param("account_id"))
 	if err != nil {
 		fail(c, err)
 		return
@@ -128,10 +128,57 @@ func (s *Server) runOpsJob(c *gin.Context) {
 		run = s.jobs.FxFeed(c.Request.Context())
 	case "idempotency":
 		run = s.jobs.PurgeIdempotency(c.Request.Context())
+	case "saga":
+		run = s.jobs.ResumeSagas(c.Request.Context())
 	default:
 		fail(c, domain.NewError(domain.CodeInvalidParam, "未知作业"))
 		return
 	}
 	s.jobs.Record(c.Request.Context(), s.operator(c), "job:"+name, s.tenantID(c, ""), run.RunID, run.Detail)
 	ok(c, run)
+}
+
+func (s *Server) listSagas(c *gin.Context) {
+	if s.books == nil {
+		ok(c, []interface{}{})
+		return
+	}
+	list, err := s.books.ListSagas(c.Request.Context(), s.tenantID(c, ""), c.Query("status"), parsePage(c).Limit)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, list)
+}
+
+func (s *Server) retrySaga(c *gin.Context) {
+	if s.books == nil {
+		fail(c, domain.ErrNotImplemented)
+		return
+	}
+	sg, err := s.books.ResumeSaga(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	if s.jobs != nil {
+		s.jobs.Record(c.Request.Context(), s.operator(c), "saga_retry", s.tenantID(c, ""), c.Param("id"), sg.Status)
+	}
+	ok(c, sg)
+}
+
+func (s *Server) compensateSaga(c *gin.Context) {
+	if s.books == nil {
+		fail(c, domain.ErrNotImplemented)
+		return
+	}
+	sg, err := s.books.CompensateSaga(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	if s.jobs != nil {
+		s.jobs.Record(c.Request.Context(), s.operator(c), "saga_compensate", s.tenantID(c, ""), c.Param("id"), sg.Status)
+	}
+	ok(c, sg)
 }

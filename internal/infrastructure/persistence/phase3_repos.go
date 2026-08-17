@@ -52,6 +52,24 @@ func (r *JournalRepo) Get(ctx context.Context, journalID string) (*domain.Journa
 	return nil, domain.ErrNotFound
 }
 
+func (r *JournalRepo) GetInTenant(ctx context.Context, tenantID, journalID string) (*domain.Journal, error) {
+	if tenantID == "" || journalID == "" {
+		return nil, domain.ErrInvalidParam
+	}
+	for _, db := range scanDBs(ctx, r.cluster, r.db) {
+		var m LedgerJournal
+		err := db.Where("journal_id = ? AND tenant_id = ?", journalID, tenantID).First(&m).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return m.toDomain(), nil
+	}
+	return nil, domain.ErrNotFound
+}
+
 func (r *JournalRepo) ListByRange(ctx context.Context, tenantID, journalType string, from, to time.Time) ([]*domain.Journal, error) {
 	var out []*domain.Journal
 	for _, db := range scanDBs(ctx, r.cluster, r.db) {
@@ -96,6 +114,21 @@ func (r *FxRateRepo) Save(ctx context.Context, rate *domain.FxRate) error {
 func (r *FxRateRepo) Get(ctx context.Context, rateID string) (*domain.FxRate, error) {
 	var m LedgerFxRate
 	err := dbFrom(ctx, r.db).Where("rate_id = ?", rateID).First(&m).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return m.toDomain(), nil
+}
+
+func (r *FxRateRepo) GetInTenant(ctx context.Context, tenantID, rateID string) (*domain.FxRate, error) {
+	if tenantID == "" || rateID == "" {
+		return nil, domain.ErrInvalidParam
+	}
+	var m LedgerFxRate
+	err := dbFrom(ctx, r.db).Where("rate_id = ? AND tenant_id = ?", rateID, tenantID).First(&m).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, domain.ErrNotFound
 	}

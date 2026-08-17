@@ -25,6 +25,7 @@ type Bookkeeping struct {
 	legs      domain.ExchangeLegRepository
 	limiter   *Limiter
 	sameShard func(a, b string) bool
+	sagas     domain.SagaRepository
 }
 
 func NewBookkeeping(
@@ -261,9 +262,15 @@ func (s *Bookkeeping) resolveFreezeHolder(ctx context.Context, req *domain.Comma
 	if err != nil {
 		return err
 	}
+	if fz.TenantID != req.TenantID {
+		return domain.ErrNotFound
+	}
 	acc, err := s.accs.GetByID(ctx, fz.AccountID)
 	if err != nil {
 		return err
+	}
+	if acc.TenantID != req.TenantID {
+		return domain.ErrNotFound
 	}
 	req.AssetCode = fz.AssetCode
 	req.Holder = domain.Holder{Type: acc.HolderType, ID: acc.HolderID}
@@ -295,6 +302,9 @@ func (s *Bookkeeping) captureOrRelease(ctx context.Context, req domain.CommandRe
 		}
 		if err != nil {
 			return err
+		}
+		if fz.TenantID != req.TenantID {
+			return domain.ErrNotFound
 		}
 		req.AssetCode = fz.AssetCode
 		if fz.Status != domain.FreezeFrozen {
@@ -384,61 +394,6 @@ func (s *Bookkeeping) transfer(ctx context.Context, req domain.CommandRequest) (
 		return s.crossShardTransfer(ctx, req)
 	}
 	return s.transferSameShard(ctx, req)
-}
-
-func (s *Bookkeeping) crossShardTransfer(ctx context.Context, req domain.CommandRequest) (*domain.CommandResult, error) {
-	hash := requestHash(req)
-	ctxFrom := domain.WithHolder(ctx, req.Holder.ID)
-	var replay *domain.CommandResult
-	if err := s.tx.WithinTx(ctxFrom, func(ctx context.Context) error {
-		r, err := s.checkIdempotency(ctx, req, hash)
-		replay = r
-		return err
-	}); err != nil {
-		return nil, err
-	}
-	if replay != nil {
-		return replay, nil
-	}
-	pending := domain.Holder{Type: domain.HolderSystemSubject, ID: domain.SystemPendingSettlement}
-	outReq := req
-	outReq.ToHolder = &pending
-	outReq.BizNo = req.BizNo + ":xshard:out"
-	outReq.RelatedBizNo = req.BizNo
-	res1, err := s.transferSameShard(ctxFrom, outReq)
-	if err != nil {
-		return nil, err
-	}
-	ctxTo := domain.WithHolder(ctx, req.ToHolder.ID)
-	inReq := req
-	inReq.Holder = pending
-	inReq.BizNo = req.BizNo + ":xshard:in"
-	inReq.RelatedBizNo = req.BizNo
-	res2, err := s.transferSameShard(ctxTo, inReq)
-	if err != nil {
-		_, _ = s.reverse(ctxFrom, domain.CommandRequest{
-			Command:      domain.CmdReverse,
-			TenantID:     req.TenantID,
-			SourceSystem: req.SourceSystem,
-			BizType:      "xshard_rollback",
-			BizNo:        req.BizNo + ":xshard:rollback",
-			RelatedBizNo: outReq.BizNo,
-			Holder:       req.Holder,
-			AssetCode:    req.AssetCode,
-		})
-		return nil, err
-	}
-	res := &domain.CommandResult{
-		Accepted:  true,
-		JournalID: res2.JournalID,
-		EntryIDs:  append(append([]string{}, res1.EntryIDs...), res2.EntryIDs...),
-		Account:   res1.Account,
-		ToAccount: res2.ToAccount,
-	}
-	_ = s.tx.WithinTx(ctxFrom, func(ctx context.Context) error {
-		return s.saveIdempotency(ctx, req, hash, res)
-	})
-	return res, nil
 }
 
 func (s *Bookkeeping) transferSameShard(ctx context.Context, req domain.CommandRequest) (*domain.CommandResult, error) {

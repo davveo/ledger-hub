@@ -23,6 +23,7 @@ func (r *AuditRepo) Create(ctx context.Context, a *domain.GatewayAudit) error {
 	return dbFrom(ctx, r.db).Create(&LedgerGatewayAudit{
 		AuditID:    a.AuditID,
 		ClientID:   a.ClientID,
+		TenantID:   a.TenantID,
 		Method:     a.Method,
 		Path:       a.Path,
 		Status:     a.Status,
@@ -48,6 +49,7 @@ func (r *AuditRepo) List(ctx context.Context, limit int) ([]*domain.GatewayAudit
 		out = append(out, &domain.GatewayAudit{
 			AuditID:    rows[i].AuditID,
 			ClientID:   rows[i].ClientID,
+			TenantID:   rows[i].TenantID,
 			Method:     rows[i].Method,
 			Path:       rows[i].Path,
 			Status:     rows[i].Status,

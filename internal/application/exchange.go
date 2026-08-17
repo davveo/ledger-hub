@@ -254,6 +254,9 @@ func (s *Bookkeeping) resolveQuote(ctx context.Context, req domain.CommandReques
 		if err != nil {
 			return nil, err
 		}
+		if snap.TenantID != req.TenantID {
+			return nil, domain.ErrNotFound
+		}
 		q.Rate = snap.Rate
 		q.BaseAsset = snap.BaseAsset
 		q.QuoteAsset = snap.QuoteAsset

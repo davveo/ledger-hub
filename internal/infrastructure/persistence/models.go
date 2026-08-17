@@ -165,8 +165,8 @@ func entryFromDomain(e *domain.LedgerEntry) *LedgerEntry {
 type LedgerFreeze struct {
 	ID        uint64 `gorm:"primaryKey;autoIncrement"`
 	FreezeID  string `gorm:"size:64;uniqueIndex;not null"`
-	BizNo     string `gorm:"size:128;uniqueIndex;not null"`
-	TenantID  string `gorm:"size:64;not null"`
+	BizNo     string `gorm:"size:128;uniqueIndex:uk_freeze_biz;not null"`
+	TenantID  string `gorm:"size:64;uniqueIndex:uk_freeze_biz;not null"`
 	AccountID string `gorm:"size:64;index;not null"`
 	AssetCode string `gorm:"size:64;not null"`
 	Amount    int64  `gorm:"not null"`
@@ -376,6 +376,7 @@ type LedgerGatewayAudit struct {
 	ID         uint64 `gorm:"primaryKey;autoIncrement"`
 	AuditID    string `gorm:"size:64;uniqueIndex;not null"`
 	ClientID   string `gorm:"size:64;index;not null"`
+	TenantID   string `gorm:"size:64;index"`
 	Method     string `gorm:"size:16;not null"`
 	Path       string `gorm:"size:255;not null"`
 	Status     int    `gorm:"not null"`
@@ -426,3 +427,37 @@ type LedgerOpsRun struct {
 }
 
 func (LedgerOpsRun) TableName() string { return "ledger_ops_run" }
+
+type LedgerTransferSaga struct {
+	ID           uint64 `gorm:"primaryKey;autoIncrement"`
+	SagaID       string `gorm:"size:64;uniqueIndex;not null"`
+	TenantID     string `gorm:"size:64;uniqueIndex:uk_saga_biz;not null"`
+	SourceSystem string `gorm:"size:64;uniqueIndex:uk_saga_biz;not null"`
+	BizNo        string `gorm:"size:128;uniqueIndex:uk_saga_biz;not null"`
+	FromType     string `gorm:"size:32;not null"`
+	FromID       string `gorm:"size:64;not null"`
+	ToType       string `gorm:"size:32;not null"`
+	ToID         string `gorm:"size:64;not null"`
+	AssetCode    string `gorm:"size:64;not null"`
+	Amount       int64  `gorm:"not null"`
+	Status       string `gorm:"size:16;index;not null"`
+	OutBizNo     string `gorm:"size:160"`
+	InBizNo      string `gorm:"size:160"`
+	RollbackNo   string `gorm:"size:160"`
+	ResultJSON   string `gorm:"type:text"`
+	LastError    string `gorm:"type:text"`
+	RetryCount   int
+	CreatedAt    time.Time
+	UpdatedAt    time.Time `gorm:"index"`
+}
+
+func (LedgerTransferSaga) TableName() string { return "ledger_transfer_saga" }
+
+type LedgerGatewayNonce struct {
+	ID        uint64 `gorm:"primaryKey;autoIncrement"`
+	ClientID  string `gorm:"size:64;uniqueIndex:uk_gw_nonce;not null"`
+	Nonce     string `gorm:"size:64;uniqueIndex:uk_gw_nonce;not null"`
+	CreatedAt time.Time `gorm:"index"`
+}
+
+func (LedgerGatewayNonce) TableName() string { return "ledger_gateway_nonce" }

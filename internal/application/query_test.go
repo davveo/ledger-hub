@@ -83,8 +83,41 @@ func TestExpiredFreezes(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := NewQueryService(memEntry{st}, memFreeze{st})
-	list, err := q.ExpiredFreezes(ctx, time.Now().UTC(), 10)
+	list, err := q.ExpiredFreezes(ctx, "t_default", time.Now().UTC(), 10)
 	if err != nil || len(list) != 1 || list[0].FreezeID != res.FreezeID {
 		t.Fatalf("expired=%+v err=%v want %s", list, err, res.FreezeID)
+	}
+}
+
+func TestCrossTenantLookupNotFound(t *testing.T) {
+	ctx := context.Background()
+	b, st := setupBooks(t)
+	holder := domain.Holder{Type: domain.HolderUser, ID: "u_xtenant"}
+	if _, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdCredit, TenantID: "t_default", SourceSystem: "campaign",
+		BizNo: "campaign:xt", Holder: holder, AssetCode: "POINT", Amount: 10,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	accs, err := memAccount{st}.ListByHolder(ctx, "t_default", holder, "POINT")
+	if err != nil || len(accs) != 1 {
+		t.Fatalf("accounts=%d err=%v", len(accs), err)
+	}
+	svc := NewAccountService(st, memAccount{st})
+	_, err = svc.GetByID(ctx, "t_other", accs[0].AccountID)
+	if !domain.Is(err, domain.CodeNotFound) {
+		t.Fatalf("cross-tenant account want 404, got %v", err)
+	}
+	fz, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdFreeze, TenantID: "t_default", SourceSystem: "order",
+		BizNo: "order:xt", Holder: holder, AssetCode: "POINT", Amount: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := NewQueryService(memEntry{st}, memFreeze{st})
+	_, err = q.FreezeByID(ctx, "t_other", fz.FreezeID)
+	if !domain.Is(err, domain.CodeNotFound) {
+		t.Fatalf("cross-tenant freeze want 404, got %v", err)
 	}
 }

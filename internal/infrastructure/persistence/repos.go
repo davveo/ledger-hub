@@ -74,6 +74,24 @@ func (r *AccountRepo) GetByID(ctx context.Context, accountID string) (*domain.Ac
 	return nil, domain.ErrNotFound
 }
 
+func (r *AccountRepo) GetByIDInTenant(ctx context.Context, tenantID, accountID string) (*domain.Account, error) {
+	if tenantID == "" || accountID == "" {
+		return nil, domain.ErrInvalidParam
+	}
+	for _, db := range scanDBs(ctx, r.cluster, r.db) {
+		var m LedgerAccount
+		err := db.Where("account_id = ? AND tenant_id = ?", accountID, tenantID).First(&m).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return m.toDomain(), nil
+	}
+	return nil, domain.ErrNotFound
+}
+
 func (r *AccountRepo) Get(ctx context.Context, tenantID string, holder domain.Holder, assetCode string) (*domain.Account, error) {
 	var m LedgerAccount
 	err := routeDB(ctx, r.cluster, r.db, holder.ID).Where(
@@ -321,6 +339,24 @@ func (r *FreezeRepo) GetByID(ctx context.Context, freezeID string) (*domain.Free
 	for _, db := range scanDBs(ctx, r.cluster, r.db) {
 		var m LedgerFreeze
 		err := db.Where("freeze_id = ?", freezeID).First(&m).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return m.toDomain(), nil
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (r *FreezeRepo) GetByIDInTenant(ctx context.Context, tenantID, freezeID string) (*domain.FreezeOrder, error) {
+	if tenantID == "" || freezeID == "" {
+		return nil, domain.ErrInvalidParam
+	}
+	for _, db := range scanDBs(ctx, r.cluster, r.db) {
+		var m LedgerFreeze
+		err := db.Where("freeze_id = ? AND tenant_id = ?", freezeID, tenantID).First(&m).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			continue
 		}

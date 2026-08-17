@@ -39,8 +39,15 @@ func (s *FxService) Quote(ctx context.Context, tenantID, base, quote string, at 
 	return s.fx.Find(ctx, tenantID, base, quote, at)
 }
 
-func (s *FxService) Get(ctx context.Context, rateID string) (*domain.FxRate, error) {
-	return s.fx.Get(ctx, rateID)
+func (s *FxService) Get(ctx context.Context, tenantID, rateID string) (*domain.FxRate, error) {
+	r, err := s.fx.Get(ctx, rateID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tenantMatch(r.TenantID, tenantID); err != nil {
+		return nil, err
+	}
+	return r, nil
 }
 
 func (s *FxService) List(ctx context.Context, tenantID string) ([]*domain.FxRate, error) {

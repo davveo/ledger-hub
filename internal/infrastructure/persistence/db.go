@@ -38,7 +38,7 @@ func Open(cfg config.MySQLConfig) (*gorm.DB, error) {
 }
 
 func AutoMigrate(db *gorm.DB) error {
-	return db.Set("gorm:table_options", "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4").AutoMigrate(
+	err := db.Set("gorm:table_options", "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4").AutoMigrate(
 		&LedgerAsset{},
 		&LedgerAccount{},
 		&LedgerEntry{},
@@ -55,7 +55,16 @@ func AutoMigrate(db *gorm.DB) error {
 		&LedgerLimitAlert{},
 		&LedgerOpsAudit{},
 		&LedgerOpsRun{},
+		&LedgerTransferSaga{},
+		&LedgerGatewayNonce{},
 	)
+	if err != nil {
+		return err
+	}
+	for _, idx := range []string{"idx_ledger_freeze_biz_no", "uni_ledger_freeze_biz_no"} {
+		_ = db.Exec("ALTER TABLE ledger_freeze DROP INDEX " + idx).Error
+	}
+	return nil
 }
 
 type TxManager struct {
@@ -135,6 +144,8 @@ type Repos struct {
 	Alert       domain.AlertRepository
 	OpsAudit    domain.OpsAuditRepository
 	OpsRun      domain.OpsRunRepository
+	Saga        domain.SagaRepository
+	Nonce       domain.NonceRepository
 }
 
 func NewRepos(db *gorm.DB) *Repos {
@@ -154,6 +165,8 @@ func NewRepos(db *gorm.DB) *Repos {
 		Alert:       NewAlertRepo(db),
 		OpsAudit:    NewOpsAuditRepo(db),
 		OpsRun:      NewOpsRunRepo(db),
+		Saga:        NewSagaRepo(db),
+		Nonce:       NewNonceRepo(db),
 	}
 }
 
@@ -175,6 +188,8 @@ func NewClusterRepos(c *Cluster) *Repos {
 		Alert:       NewAlertRepo(primary),
 		OpsAudit:    NewOpsAuditRepo(primary),
 		OpsRun:      NewOpsRunRepo(primary),
+		Saga:        NewSagaRepo(primary),
+		Nonce:       NewNonceRepo(primary),
 	}
 }
 

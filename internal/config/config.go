@@ -50,17 +50,27 @@ type LogConfig struct {
 }
 
 type GatewayConfig struct {
-	Upstream       string       `mapstructure:"upstream"`
-	RateLimitRPS   int          `mapstructure:"rate_limit_rps"`
-	MaxSkewSeconds int          `mapstructure:"max_skew_seconds"`
-	ConsoleToken   string       `mapstructure:"console_token"`
-	Clients        []ClientAuth `mapstructure:"clients"`
+	Upstream           string       `mapstructure:"upstream"`
+	RateLimitRPS       int          `mapstructure:"rate_limit_rps"`
+	MaxSkewSeconds     int          `mapstructure:"max_skew_seconds"`
+	ConsoleToken       string       `mapstructure:"console_token"`
+	DefaultTenant      string       `mapstructure:"default_tenant"`
+	AcceptSignVersions []string     `mapstructure:"accept_sign_versions"`
+	Clients            []ClientAuth `mapstructure:"clients"`
 }
 
 type ClientAuth struct {
-	ClientID     string `mapstructure:"client_id"`
-	Secret       string `mapstructure:"secret"`
-	RateLimitRPS int    `mapstructure:"rate_limit_rps"`
+	ClientID     string        `mapstructure:"client_id"`
+	Secret       string        `mapstructure:"secret"`
+	KeyVersion   string        `mapstructure:"key_version"`
+	Keys         []ClientKey   `mapstructure:"keys"`
+	RateLimitRPS int           `mapstructure:"rate_limit_rps"`
+	Tenants      []string      `mapstructure:"tenants"`
+}
+
+type ClientKey struct {
+	Version string `mapstructure:"version"`
+	Secret  string `mapstructure:"secret"`
 }
 
 type ACLConfig struct {
@@ -88,6 +98,7 @@ type WorkerConfig struct {
 	FxFeedInterval         time.Duration `mapstructure:"fx_feed_interval"`
 	IdempotencyInterval    time.Duration `mapstructure:"idempotency_interval"`
 	IdempotencyRetain      time.Duration `mapstructure:"idempotency_retain"`
+	SagaInterval           time.Duration `mapstructure:"saga_interval"`
 	FxFeed                 []FxFeedPair  `mapstructure:"fx_feed"`
 }
 
@@ -138,6 +149,15 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.App.ReconcileDir == "" {
 		cfg.App.ReconcileDir = "data/reconcile"
+	}
+	if cfg.Gateway.DefaultTenant == "" {
+		cfg.Gateway.DefaultTenant = cfg.App.DefaultTenant
+	}
+	if len(cfg.Gateway.AcceptSignVersions) == 0 {
+		cfg.Gateway.AcceptSignVersions = []string{"v1", "v2"}
+	}
+	if cfg.Worker.SagaInterval <= 0 {
+		cfg.Worker.SagaInterval = 15 * time.Second
 	}
 	if cfg.Connector.Addr == "" {
 		cfg.Connector.Addr = ":8090"

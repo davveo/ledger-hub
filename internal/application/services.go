@@ -108,8 +108,15 @@ func (s *AccountService) Get(ctx context.Context, tenantID string, holder domain
 	return s.accs.Get(ctx, tenantID, holder, assetCode)
 }
 
-func (s *AccountService) GetByID(ctx context.Context, accountID string) (*domain.Account, error) {
-	return s.accs.GetByID(ctx, accountID)
+func (s *AccountService) GetByID(ctx context.Context, tenantID, accountID string) (*domain.Account, error) {
+	acc, err := s.accs.GetByID(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tenantMatch(acc.TenantID, tenantID); err != nil {
+		return nil, err
+	}
+	return acc, nil
 }
 
 func (s *AccountService) List(ctx context.Context, tenantID, assetCode string) ([]*domain.Account, error) {
@@ -126,11 +133,11 @@ func (s *AccountService) ListByHolder(ctx context.Context, tenantID string, hold
 	return s.accs.ListByHolder(ctx, tenantID, holder, assetCode)
 }
 
-func (s *AccountService) SetStatus(ctx context.Context, accountID string, status domain.AccountStatus) (*domain.Account, error) {
+func (s *AccountService) SetStatus(ctx context.Context, tenantID, accountID string, status domain.AccountStatus) (*domain.Account, error) {
 	if status != domain.AccountActive && status != domain.AccountDisabled {
 		return nil, domain.ErrInvalidParam
 	}
-	acc, err := s.accs.GetByID(ctx, accountID)
+	acc, err := s.GetByID(ctx, tenantID, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -173,8 +180,15 @@ func (s *QueryService) EntriesByHolder(ctx context.Context, tenantID string, hol
 	return s.entries.ListByHolder(ctx, tenantID, holder, assetCode, from, to, page.Clamp(50, 200))
 }
 
-func (s *QueryService) FreezeByID(ctx context.Context, freezeID string) (*domain.FreezeOrder, error) {
-	return s.freezes.GetByID(ctx, freezeID)
+func (s *QueryService) FreezeByID(ctx context.Context, tenantID, freezeID string) (*domain.FreezeOrder, error) {
+	fz, err := s.freezes.GetByID(ctx, freezeID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tenantMatch(fz.TenantID, tenantID); err != nil {
+		return nil, err
+	}
+	return fz, nil
 }
 
 func (s *QueryService) FreezeByBizNo(ctx context.Context, tenantID, bizNo string) (*domain.FreezeOrder, error) {
@@ -191,21 +205,47 @@ func (s *QueryService) FreezesByHolder(ctx context.Context, tenantID string, hol
 	return s.freezes.ListByHolder(ctx, tenantID, holder, assetCode, status, page.Clamp(50, 200))
 }
 
-func (s *QueryService) EntriesByAccount(ctx context.Context, accountID string) ([]*domain.LedgerEntry, error) {
+func (s *QueryService) EntriesByAccount(ctx context.Context, tenantID, accountID string) ([]*domain.LedgerEntry, error) {
 	if accountID == "" {
 		return nil, domain.ErrInvalidParam
 	}
-	return s.entries.ListByAccount(ctx, accountID)
+	list, err := s.entries.ListByAccount(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	out := list[:0]
+	for _, e := range list {
+		if e.TenantID == tenantID {
+			out = append(out, e)
+		}
+	}
+	if len(out) == 0 && len(list) > 0 {
+		return nil, domain.ErrNotFound
+	}
+	return out, nil
 }
 
-func (s *QueryService) ExpiredFreezes(ctx context.Context, now time.Time, limit int) ([]*domain.FreezeOrder, error) {
+func (s *QueryService) ExpiredFreezes(ctx context.Context, tenantID string, now time.Time, limit int) ([]*domain.FreezeOrder, error) {
 	if s.freezes == nil {
 		return nil, domain.ErrNotImplemented
 	}
 	if limit <= 0 {
 		limit = 50
 	}
-	return s.freezes.ListExpired(ctx, now, limit)
+	list, err := s.freezes.ListExpired(ctx, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	if tenantID == "" {
+		return list, nil
+	}
+	out := list[:0]
+	for _, f := range list {
+		if f.TenantID == tenantID {
+			out = append(out, f)
+		}
+	}
+	return out, nil
 }
 
 func (s *QueryService) Frozen(ctx context.Context, tenantID, assetCode string) ([]*domain.FreezeOrder, error) {
@@ -215,12 +255,15 @@ func (s *QueryService) Frozen(ctx context.Context, tenantID, assetCode string) (
 	return s.freezes.ListFrozen(ctx, tenantID, assetCode)
 }
 
-func (s *QueryService) Journal(ctx context.Context, journalID string) (*domain.Journal, []*domain.LedgerEntry, error) {
+func (s *QueryService) Journal(ctx context.Context, tenantID, journalID string) (*domain.Journal, []*domain.LedgerEntry, error) {
 	if s.journals == nil {
 		return nil, nil, domain.ErrNotImplemented
 	}
 	j, err := s.journals.Get(ctx, journalID)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := tenantMatch(j.TenantID, tenantID); err != nil {
 		return nil, nil, err
 	}
 	entries, err := s.entries.ListByJournal(ctx, journalID)

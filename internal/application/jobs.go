@@ -257,3 +257,13 @@ func (j *Jobs) PurgeIdempotency(ctx context.Context) *domain.OpsRun {
 		return int(n), "", err
 	})
 }
+
+func (j *Jobs) ResumeSagas(ctx context.Context) *domain.OpsRun {
+	return j.track(ctx, "saga", "", func() (int, string, error) {
+		if j.books == nil {
+			return 0, "", nil
+		}
+		n, err := j.books.ResumeOpenSagas(ctx, 50)
+		return n, "", err
+	})
+}

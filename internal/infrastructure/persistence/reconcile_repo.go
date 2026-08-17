@@ -39,6 +39,21 @@ func (r *ReconcileRepo) GetJob(ctx context.Context, jobID string) (*domain.Recon
 	return jobFromModel(&m), nil
 }
 
+func (r *ReconcileRepo) GetJobInTenant(ctx context.Context, tenantID, jobID string) (*domain.ReconcileJob, error) {
+	if tenantID == "" || jobID == "" {
+		return nil, domain.ErrInvalidParam
+	}
+	var m LedgerReconcileJob
+	err := dbFrom(ctx, r.db).Where("job_id = ? AND tenant_id = ?", jobID, tenantID).First(&m).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return jobFromModel(&m), nil
+}
+
 func (r *ReconcileRepo) ListJobs(ctx context.Context, tenantID string, limit int) ([]*domain.ReconcileJob, error) {
 	if limit <= 0 {
 		limit = 50

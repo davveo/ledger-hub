@@ -69,7 +69,8 @@ func main() {
 	assetSvc := application.NewAssetService(repos.Asset)
 	accountSvc := application.NewAccountService(repos.Asset, repos.Account)
 	books := application.NewBookkeeping(tx, repos.Asset, repos.Account, repos.Entry, repos.Freeze, repos.Idempotency, acl).
-		UsePhase3(repos.Journal, repos.FxRate, repos.ExchangeLeg, limiter, cluster.SameShard)
+		UsePhase3(repos.Journal, repos.FxRate, repos.ExchangeLeg, limiter, cluster.SameShard).
+		WithSaga(repos.Saga)
 	query := application.NewQueryService(repos.Entry, repos.Freeze).WithJournal(repos.Journal)
 	recon := application.NewReconcileService(repos.Entry, repos.Account, repos.Freeze, repos.Reconcile).
 		UsePhase3(repos.ExchangeLeg, repos.Journal).

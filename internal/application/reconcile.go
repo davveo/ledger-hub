@@ -116,6 +116,13 @@ func (s *ReconcileService) Trigger(ctx context.Context, tenantID, date, sourceSy
 	}
 	diffs = append(diffs, l3...)
 
+	if lPend := s.pendingSettlementTieOut(ctx, tenantID, assetCode); len(lPend) > 0 {
+		for i := range lPend {
+			lPend[i].JobID = job.JobID
+		}
+		diffs = append(diffs, lPend...)
+	}
+
 	l4 := s.fxTieOut(ctx, tenantID, entries)
 	for i := range l4 {
 		l4[i].JobID = job.JobID
@@ -162,9 +169,12 @@ func (s *ReconcileService) Trigger(ctx context.Context, tenantID, date, sourceSy
 	}, nil
 }
 
-func (s *ReconcileService) GetJob(ctx context.Context, jobID string) (*ReconcileReport, error) {
+func (s *ReconcileService) GetJob(ctx context.Context, tenantID, jobID string) (*ReconcileReport, error) {
 	job, err := s.store.GetJob(ctx, jobID)
 	if err != nil {
+		return nil, err
+	}
+	if err := tenantMatch(job.TenantID, tenantID); err != nil {
 		return nil, err
 	}
 	diffs, err := s.store.ListDiffs(ctx, jobID)
@@ -200,9 +210,23 @@ func (s *ReconcileService) ListOpenDiffs(ctx context.Context, tenantID string, l
 	return s.store.ListOpenDiffs(ctx, tenantID, limit)
 }
 
-func (s *ReconcileService) ResolveDiff(ctx context.Context, diffID, note, operator string) error {
+func (s *ReconcileService) ResolveDiff(ctx context.Context, tenantID, diffID, note, operator string) error {
 	if diffID == "" {
 		return domain.ErrInvalidParam
+	}
+	open, err := s.store.ListOpenDiffs(ctx, tenantID, 200)
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, d := range open {
+		if d.DiffID == diffID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return domain.ErrNotFound
 	}
 	if operator != "" && note != "" {
 		note = operator + ": " + note
@@ -322,6 +346,25 @@ func (s *ReconcileService) balanceTieOut(ctx context.Context, tenantID, assetCod
 	return diffs, nil
 }
 
+func (s *ReconcileService) pendingSettlementTieOut(ctx context.Context, tenantID, assetCode string) []*domain.ReconcileDiff {
+	if s.accs == nil || assetCode == "" {
+		return nil
+	}
+	acc, err := s.accs.Get(ctx, tenantID, domain.Holder{Type: domain.HolderSystemSubject, ID: domain.SystemPendingSettlement}, assetCode)
+	if err != nil || acc.Available == 0 {
+		return nil
+	}
+	return []*domain.ReconcileDiff{{
+		DiffID:       idgen.New("rd_"),
+		Kind:         domain.DiffCrossShardInFlight,
+		AssetCode:    assetCode,
+		AccountID:    acc.AccountID,
+		LedgerAmount: acc.Available,
+		Status:       domain.DiffStatusOpen,
+		Note:         "pending_settlement 存在在途余额，请检查未完成跨分片 Saga",
+	}}
+}
+
 func (s *ReconcileService) freezeTieOut(ctx context.Context, tenantID, assetCode string) ([]*domain.ReconcileDiff, error) {
 	accs, err := s.accs.ListByTenant(ctx, tenantID, assetCode)
 	if err != nil {
@@ -414,7 +457,8 @@ func (s *ReconcileService) fxTieOut(ctx context.Context, tenantID string, entrie
 			diffs = append(diffs, newDiff("", domain.DiffAmountMismatch, k.biz, domain.CmdExchange, leg.FeeAsset, leg.FeeAmount, feeAmt, "fee 与凭证不符"))
 		}
 		if leg.RateID != "" && s.fx != nil {
-			if _, err := s.fx.Get(ctx, leg.RateID); err != nil {
+			snap, err := s.fx.Get(ctx, leg.RateID)
+			if err != nil || snap.TenantID != tenantID {
 				diffs = append(diffs, newDiff("", domain.DiffFxIncomplete, k.biz, domain.CmdExchange, "", 0, 0, "缺少 fx_rate "+leg.RateID))
 			}
 		}

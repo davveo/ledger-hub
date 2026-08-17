@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/davveo/ledger-hub/pkg/sign"
 )
 
@@ -79,19 +81,34 @@ type Account struct {
 }
 
 type Client struct {
-	baseURL  string
-	clientID string
-	secret   string
-	http     *http.Client
+	baseURL    string
+	clientID   string
+	secret     string
+	keyVersion string
+	tenantID   string
+	http       *http.Client
 }
 
 func New(baseURL, clientID, secret string) *Client {
 	return &Client{
-		baseURL:  baseURL,
-		clientID: clientID,
-		secret:   secret,
-		http:     &http.Client{Timeout: 10 * time.Second},
+		baseURL:    baseURL,
+		clientID:   clientID,
+		secret:     secret,
+		keyVersion: "1",
+		http:       &http.Client{Timeout: 10 * time.Second},
 	}
+}
+
+func (c *Client) WithTenant(tenantID string) *Client {
+	c.tenantID = tenantID
+	return c
+}
+
+func (c *Client) WithKeyVersion(version string) *Client {
+	if version != "" {
+		c.keyVersion = version
+	}
+	return c
 }
 
 func (c *Client) Credit(ctx context.Context, body map[string]interface{}) (json.RawMessage, error) {
@@ -199,11 +216,20 @@ func (c *Client) do(ctx context.Context, method, path string, body interface{}) 
 	if err != nil {
 		return nil, err
 	}
+	u, _ := url.Parse(c.baseURL + path)
 	ts := sign.Timestamp()
+	nonce := uuid.NewString()
+	tenant := c.tenantID
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Client-Id", c.clientID)
 	req.Header.Set("X-Timestamp", ts)
-	req.Header.Set("X-Signature", sign.HMACSHA256(c.clientID, c.secret, ts, raw))
+	req.Header.Set("X-Sign-Version", sign.VersionV2)
+	req.Header.Set("X-Key-Version", c.keyVersion)
+	req.Header.Set("X-Nonce", nonce)
+	if tenant != "" {
+		req.Header.Set("X-Tenant-Id", tenant)
+	}
+	req.Header.Set("X-Signature", sign.HMACV2(c.secret, c.clientID, method, u.Path, u.RawQuery, tenant, ts, nonce, raw))
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, err

@@ -314,12 +314,44 @@ type ACLRule struct {
 type GatewayAudit struct {
 	AuditID    string    `json:"audit_id"`
 	ClientID   string    `json:"client_id"`
+	TenantID   string    `json:"tenant_id,omitempty"`
 	Method     string    `json:"method"`
 	Path       string    `json:"path"`
 	Status     int       `json:"status"`
 	RemoteAddr string    `json:"remote_addr,omitempty"`
 	RequestID  string    `json:"request_id,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
+}
+
+const (
+	SagaPending      = "pending"
+	SagaOutDone      = "out_done"
+	SagaInDone       = "in_done"
+	SagaCompensating = "compensating"
+	SagaCompleted    = "completed"
+	SagaFailed       = "failed"
+)
+
+type TransferSaga struct {
+	SagaID       string     `json:"saga_id"`
+	TenantID     string     `json:"tenant_id"`
+	SourceSystem string     `json:"source_system"`
+	BizNo        string     `json:"biz_no"`
+	FromType     HolderType `json:"from_type"`
+	FromID       string     `json:"from_id"`
+	ToType       HolderType `json:"to_type"`
+	ToID         string     `json:"to_id"`
+	AssetCode    string     `json:"asset_code"`
+	Amount       int64      `json:"amount"`
+	Status       string     `json:"status"`
+	OutBizNo     string     `json:"out_biz_no,omitempty"`
+	InBizNo      string     `json:"in_biz_no,omitempty"`
+	RollbackNo   string     `json:"rollback_biz_no,omitempty"`
+	ResultJSON   string     `json:"-"`
+	LastError    string     `json:"last_error,omitempty"`
+	RetryCount   int        `json:"retry_count"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 const (
@@ -330,7 +362,8 @@ const (
 	DiffBalanceTieOut  = "balance_tie_out"
 	DiffFreezeTieOut   = "freeze_tie_out"
 	DiffFxIncomplete   = "fx_incomplete"
-	DiffChannelMismatch = "channel_mismatch"
+	DiffChannelMismatch   = "channel_mismatch"
+	DiffCrossShardInFlight = "cross_shard_inflight"
 
 	ReconJobRunning  = "running"
 	ReconJobDone     = "done"

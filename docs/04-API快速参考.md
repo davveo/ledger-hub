@@ -21,19 +21,41 @@ API 前缀：
 | `X-Client-Id` | 管理员分配的客户端 ID |
 | `X-Timestamp` | Unix 秒时间戳 |
 | `X-Signature` | HMAC-SHA256 十六进制签名 |
-| `X-Tenant-Id` | 当前租户，未传时使用服务默认租户 |
+| `X-Sign-Version` | `v2`（SDK 默认）。缺省且无 nonce 时按 V1 |
+| `X-Nonce` | V2 必填，时间窗内不可重复 |
+| `X-Key-Version` | 密钥版本，缺省 `1` |
+| `X-Tenant-Id` | 当前租户；未传时使用 `gateway.default_tenant` |
 | `X-Request-Id` | 推荐传入，用于链路排查 |
 | `Content-Type` | 写请求使用 `application/json` |
 
-当前签名算法：
+运营控制台只用 `X-Console-Token`，**禁止** `?console_token=`。
+
+**V2**（推荐，`pkg/client` 默认）：
+
+```text
+hex(HMAC-SHA256(secret, CanonicalV2))
+
+CanonicalV2 =
+v2\n
+client_id\n
+METHOD\n
+path\n
+canonical_query\n
+tenant_id\n
+timestamp\n
+nonce\n
+sha256_hex(body)
+```
+
+**V1**（迁移兼容）：
 
 ```text
 hex(HMAC-SHA256(secret, client_id + timestamp + raw_body))
 ```
 
-请求时间默认允许与服务端相差 300 秒。写请求体中的 `source_system` 必须与 `X-Client-Id` 一致。
+请求时间默认允许与服务端相差 300 秒。写请求体中的 `source_system` 必须与 `X-Client-Id` 一致。client 配置了 `tenants` 时不可访问列表外租户。nonce 重复返回 `40102`。
 
-Go 项目可使用 `pkg/client` 自动完成签名和请求。
+Go 项目可使用 `pkg/client` 自动完成 V2 签名和请求。
 
 ## 2. 通用规则
 
@@ -41,7 +63,9 @@ Go 项目可使用 `pkg/client` 自动完成签名和请求。
 
 - 所有金额均为资产最小单位整数。
 - JSON 使用字符串，避免精度丢失。
-- 精度为 2 的资产中，`"10000"` 表示 `100.00`。
+- 精度为 2 的资产中，`"1049900"` 表示 `10499.00`。
+- `amount` / `from.amount` / `to.amount` / `fee.amount` / `tolerance` 解析失败返回 `40001`，不会变成 0。
+- 查询 `from`/`to` 须为 RFC3339，且 `from < to`，最大跨度 366 天。
 
 ### 2.2 幂等
 
@@ -182,6 +206,8 @@ POST /api/v1/ledger/commands/transfer
   "amount": "100"
 }
 ```
+
+跨分片时经 `pending_settlement` 持久化 Saga（`pending` → `out_done` → `in_done` → `completed`），Worker 续跑，失败则补偿。
 
 ### 3.7 Exchange 跨资产兑换
 
@@ -347,9 +373,11 @@ Connector 用于演示 Adapter Contract，不等同于生产 MQ 中间件。
 | code | HTTP | 含义 | 调用方处理 |
 |---:|---:|---|---|
 | 0 | 200 | 成功 | 使用响应数据 |
-| 40001 | 400 | 参数错误/资产未注册 | 修正参数，不要盲重试 |
-| 40301 | 403 | ACL 无权限 | 检查客户端权限配置 |
-| 40401 | 404 | 账户或冻结单不存在 | 核对租户、ID 和业务号 |
+| 40001 | 400 | 参数错误/资产未注册/金额或时间非法 | 修正参数，不要盲重试 |
+| 40100 | 401 | Gateway 鉴权失败 | 检查 client、时间戳、签名、密钥版本 |
+| 40102 | 401 | nonce 重放 | 换新 nonce 后重试 |
+| 40301 | 403 | ACL 无权限或 client 无权访问租户 | 检查客户端权限配置 |
+| 40401 | 404 | 账户或冻结单不存在 | 核对租户、ID 和业务号（跨租户也是 404） |
 | 40901 | 409 | 幂等键相同但参数不同 | 停止重试并调查业务号 |
 | 42201 | 422 | 余额不足 | 引导充值或更换方式 |
 | 42202 | 422 | 冻结状态不允许操作 | 查询冻结单最新状态 |
@@ -359,7 +387,7 @@ Connector 用于演示 Adapter Contract，不等同于生产 MQ 中间件。
 | 50000 | 500 | 内部错误 | 保持原 biz_no 安全重试 |
 | 50101 | 501 | 能力未实现 | 不应重试 |
 
-HTTP `401` 表示 Gateway 鉴权失败，检查 client ID、时间戳、签名和密钥。
+HTTP `401` 表示 Gateway 鉴权失败，检查 client ID、时间戳、签名、nonce、密钥版本和租户授权。
 
 ## 10. 接入验收
 

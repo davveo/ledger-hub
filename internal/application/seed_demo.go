@@ -114,7 +114,7 @@ func SeedDemo(ctx context.Context, books *Bookkeeping, assets *AssetService, acc
 	if err != nil {
 		return err
 	}
-	if _, err := accounts.SetStatus(ctx, dormantAcc.AccountID, domain.AccountDisabled); err != nil {
+	if _, err := accounts.SetStatus(ctx, tenantID, dormantAcc.AccountID, domain.AccountDisabled); err != nil {
 		return err
 	}
 

@@ -30,7 +30,8 @@ func main() {
 	}
 	if cluster, err := persistence.OpenCluster(cfg.MySQL); err == nil {
 		_ = cluster.AutoMigrate()
-		gw.WithAudit(persistence.NewAuditRepo(cluster.Primary()))
+		gw.WithAudit(persistence.NewAuditRepo(cluster.Primary())).
+			WithNonce(persistence.NewNonceRepo(cluster.Primary()))
 	} else {
 		zapLog.Warn("gateway audit db skipped", zap.Error(err))
 	}

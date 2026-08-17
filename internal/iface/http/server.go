@@ -114,6 +114,9 @@ func (s *Server) Engine() *gin.Engine {
 		g.GET("/ops/audits", s.listGatewayAudits)
 		g.GET("/ops/actions", s.listOpsActions)
 		g.GET("/ops/alerts", s.listLimitAlerts)
+		g.GET("/ops/sagas", s.listSagas)
+		g.POST("/ops/sagas/:id/retry", s.retrySaga)
+		g.POST("/ops/sagas/:id/compensate", s.compensateSaga)
 		g.GET("/openapi.yaml", s.openapiSpec)
 
 		g.POST("/reconcile/jobs", s.triggerReconcile)
@@ -144,6 +147,8 @@ func fail(c *gin.Context, err error) {
 	if de, okErr := err.(*domain.Error); okErr {
 		status := http.StatusBadRequest
 		switch de.Code {
+		case domain.CodeUnauthorized, domain.CodeReplay:
+			status = http.StatusUnauthorized
 		case domain.CodeNotFound:
 			status = http.StatusNotFound
 		case domain.CodeForbidden:
@@ -232,12 +237,16 @@ func (s *Server) handleCommand(c *gin.Context, forced domain.Command) {
 		cmd = domain.Command(dto.Command)
 	}
 	amount, err := parseAmount(dto.Amount)
-	if err != nil && dto.Amount != "" {
-		fail(c, domain.ErrInvalidParam)
+	if err != nil {
+		fail(c, err)
 		return
 	}
 	if dto.From != nil && dto.From.Amount != "" {
-		amount, _ = parseAmount(dto.From.Amount)
+		amount, err = parseAmount(dto.From.Amount)
+		if err != nil {
+			fail(c, domain.NewError(domain.CodeInvalidParam, "from.amount 必须为最小单位整数"))
+			return
+		}
 		if dto.AssetCode == "" {
 			dto.AssetCode = dto.From.AssetCode
 		}
@@ -245,16 +254,30 @@ func (s *Server) handleCommand(c *gin.Context, forced domain.Command) {
 	var toAmount int64
 	toAsset := ""
 	if dto.To != nil {
-		toAmount, _ = parseAmount(dto.To.Amount)
+		var err error
+		toAmount, err = parseAmount(dto.To.Amount)
+		if err != nil {
+			fail(c, domain.NewError(domain.CodeInvalidParam, "to.amount 必须为最小单位整数"))
+			return
+		}
 		toAsset = dto.To.AssetCode
 	}
 	var feeAmt int64
 	feeAsset := ""
 	if dto.Fee != nil {
-		feeAmt, _ = parseAmount(dto.Fee.Amount)
+		var err error
+		feeAmt, err = parseAmount(dto.Fee.Amount)
+		if err != nil {
+			fail(c, domain.NewError(domain.CodeInvalidParam, "fee.amount 必须为最小单位整数"))
+			return
+		}
 		feeAsset = dto.Fee.AssetCode
 	}
-	tol, _ := parseAmount(dto.Tolerance)
+	tol, err := parseAmount(dto.Tolerance)
+	if err != nil {
+		fail(c, domain.NewError(domain.CodeInvalidParam, "tolerance 必须为最小单位整数"))
+		return
+	}
 	req := domain.CommandRequest{
 		Command:      cmd,
 		RequestID:    dto.RequestID,
@@ -432,7 +455,7 @@ func (s *Server) getAccount(c *gin.Context) {
 }
 
 func (s *Server) getAccountByID(c *gin.Context) {
-	acc, err := s.accounts.GetByID(c.Request.Context(), c.Param("account_id"))
+	acc, err := s.accounts.GetByID(c.Request.Context(), s.tenantID(c, ""), c.Param("account_id"))
 	if err != nil {
 		fail(c, err)
 		return
@@ -452,18 +475,10 @@ func (s *Server) listEntries(c *gin.Context) {
 		return
 	}
 	holder := domain.Holder{Type: domain.HolderType(c.Query("holder_type")), ID: c.Query("holder_id")}
-	var from, to *time.Time
-	if v := c.Query("from"); v != "" {
-		t, err := time.Parse(time.RFC3339, v)
-		if err == nil {
-			from = &t
-		}
-	}
-	if v := c.Query("to"); v != "" {
-		t, err := time.Parse(time.RFC3339, v)
-		if err == nil {
-			to = &t
-		}
+	from, to, err := parseTimeRange(c)
+	if err != nil {
+		fail(c, err)
+		return
 	}
 	page := parsePage(c)
 	list, err := s.query.EntriesByHolder(c.Request.Context(), tenant, holder, c.Query("asset_code"), from, to, page)
@@ -475,7 +490,7 @@ func (s *Server) listEntries(c *gin.Context) {
 }
 
 func (s *Server) getFreeze(c *gin.Context) {
-	fz, err := s.query.FreezeByID(c.Request.Context(), c.Param("freeze_id"))
+	fz, err := s.query.FreezeByID(c.Request.Context(), s.tenantID(c, ""), c.Param("freeze_id"))
 	if err != nil {
 		fail(c, err)
 		return
@@ -485,7 +500,7 @@ func (s *Server) getFreeze(c *gin.Context) {
 
 func (s *Server) getFreezeByBizNo(c *gin.Context) {
 	if c.Query("expired") == "1" {
-		list, err := s.query.ExpiredFreezes(c.Request.Context(), time.Now().UTC(), parsePage(c).Limit)
+		list, err := s.query.ExpiredFreezes(c.Request.Context(), s.tenantID(c, ""), time.Now().UTC(), parsePage(c).Limit)
 		if err != nil {
 			fail(c, err)
 			return
@@ -606,7 +621,7 @@ func (s *Server) listReconcileFiles(c *gin.Context) {
 }
 
 func (s *Server) getReconcileJob(c *gin.Context) {
-	rep, err := s.recon.GetJob(c.Request.Context(), c.Param("id"))
+	rep, err := s.recon.GetJob(c.Request.Context(), s.tenantID(c, ""), c.Param("id"))
 	if err != nil {
 		fail(c, err)
 		return
@@ -638,7 +653,7 @@ func (s *Server) resolveDiff(c *gin.Context) {
 	}
 	_ = c.ShouldBindJSON(&body)
 	op := s.operator(c)
-	if err := s.recon.ResolveDiff(c.Request.Context(), c.Param("id"), body.Note, op); err != nil {
+	if err := s.recon.ResolveDiff(c.Request.Context(), s.tenantID(c, ""), c.Param("id"), body.Note, op); err != nil {
 		fail(c, err)
 		return
 	}
@@ -665,7 +680,7 @@ func (s *Server) listAssets(c *gin.Context) {
 }
 
 func (s *Server) getJournal(c *gin.Context) {
-	j, entries, err := s.query.Journal(c.Request.Context(), c.Param("id"))
+	j, entries, err := s.query.Journal(c.Request.Context(), s.tenantID(c, ""), c.Param("id"))
 	if err != nil {
 		fail(c, err)
 		return
@@ -757,7 +772,7 @@ func (s *Server) getFxRate(c *gin.Context) {
 		fail(c, domain.ErrNotImplemented)
 		return
 	}
-	r, err := s.fx.Get(c.Request.Context(), c.Param("rate_id"))
+	r, err := s.fx.Get(c.Request.Context(), s.tenantID(c, ""), c.Param("rate_id"))
 	if err != nil {
 		fail(c, err)
 		return
@@ -862,7 +877,7 @@ func (s *Server) setAssetStatus(st domain.AssetStatus) gin.HandlerFunc {
 
 func (s *Server) setAccountStatus(st domain.AccountStatus) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		acc, err := s.accounts.SetStatus(c.Request.Context(), c.Param("account_id"), st)
+		acc, err := s.accounts.SetStatus(c.Request.Context(), s.tenantID(c, ""), c.Param("account_id"), st)
 		if err != nil {
 			fail(c, err)
 			return
@@ -930,7 +945,41 @@ func parseAmount(s string) (int64, error) {
 	if s == "" {
 		return 0, nil
 	}
-	return strconv.ParseInt(s, 10, 64)
+	if strings.ContainsAny(s, ".eE+") {
+		return 0, domain.NewError(domain.CodeInvalidParam, "金额必须为最小单位整数")
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, domain.NewError(domain.CodeInvalidParam, "金额必须为最小单位整数")
+	}
+	return n, nil
+}
+
+func parseTimeRange(c *gin.Context) (*time.Time, *time.Time, error) {
+	var from, to *time.Time
+	if v := c.Query("from"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return nil, nil, domain.NewError(domain.CodeInvalidParam, "from 需为 RFC3339")
+		}
+		from = &t
+	}
+	if v := c.Query("to"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return nil, nil, domain.NewError(domain.CodeInvalidParam, "to 需为 RFC3339")
+		}
+		to = &t
+	}
+	if from != nil && to != nil {
+		if !from.Before(*to) {
+			return nil, nil, domain.NewError(domain.CodeInvalidParam, "from 必须早于 to")
+		}
+		if to.Sub(*from) > 366*24*time.Hour {
+			return nil, nil, domain.NewError(domain.CodeInvalidParam, "查询时间跨度不能超过 366 天")
+		}
+	}
+	return from, to, nil
 }
 
 func requestID() gin.HandlerFunc {

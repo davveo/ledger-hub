@@ -52,17 +52,23 @@ func (r *Runner) Start(ctx context.Context) {
 	if idemEvery <= 0 {
 		idemEvery = time.Hour
 	}
+	sagaEvery := r.cfg.SagaInterval
+	if sagaEvery <= 0 {
+		sagaEvery = 15 * time.Second
+	}
 	expireTick := time.NewTicker(expireEvery)
 	reconTick := time.NewTicker(reconEvery)
 	assetTick := time.NewTicker(assetEvery)
 	feedTick := time.NewTicker(feedEvery)
 	idemTick := time.NewTicker(idemEvery)
+	sagaTick := time.NewTicker(sagaEvery)
 	go func() {
 		defer expireTick.Stop()
 		defer reconTick.Stop()
 		defer assetTick.Stop()
 		defer feedTick.Stop()
 		defer idemTick.Stop()
+		defer sagaTick.Stop()
 		for {
 			select {
 			case <-ctx.Done():
@@ -87,6 +93,11 @@ func (r *Runner) Start(ctx context.Context) {
 				run := r.jobs.PurgeIdempotency(ctx)
 				if run.Count > 0 || run.Status == "failed" {
 					r.log.Info("purge idempotency", zap.String("status", run.Status), zap.Int("count", run.Count))
+				}
+			case <-sagaTick.C:
+				run := r.jobs.ResumeSagas(ctx)
+				if run.Count > 0 || run.Status == "failed" {
+					r.log.Info("resume saga", zap.String("status", run.Status), zap.Int("count", run.Count), zap.String("detail", run.Detail))
 				}
 			}
 		}

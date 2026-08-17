@@ -699,3 +699,144 @@ func TestHolderTypesRejected(t *testing.T) {
 		t.Fatalf("want holder type rejected, got %v", err)
 	}
 }
+
+type memSaga struct {
+	byID  map[string]*domain.TransferSaga
+	byBiz map[string]*domain.TransferSaga
+}
+
+func newMemSaga() *memSaga {
+	return &memSaga{byID: map[string]*domain.TransferSaga{}, byBiz: map[string]*domain.TransferSaga{}}
+}
+
+func sagaBizKey(tenant, src, biz string) string { return tenant + "|" + src + "|" + biz }
+
+func (m *memSaga) Create(_ context.Context, s *domain.TransferSaga) error {
+	if s == nil || s.SagaID == "" {
+		return domain.ErrInvalidParam
+	}
+	key := sagaBizKey(s.TenantID, s.SourceSystem, s.BizNo)
+	if _, ok := m.byBiz[key]; ok {
+		return domain.ErrIdempotencyConflict
+	}
+	cp := *s
+	m.byID[s.SagaID] = &cp
+	m.byBiz[key] = &cp
+	return nil
+}
+
+func (m *memSaga) Update(_ context.Context, s *domain.TransferSaga) error {
+	cur := m.byID[s.SagaID]
+	if cur == nil {
+		return domain.ErrNotFound
+	}
+	*cur = *s
+	return nil
+}
+
+func (m *memSaga) Get(_ context.Context, sagaID string) (*domain.TransferSaga, error) {
+	s := m.byID[sagaID]
+	if s == nil {
+		return nil, domain.ErrNotFound
+	}
+	cp := *s
+	return &cp, nil
+}
+
+func (m *memSaga) GetByBizNo(_ context.Context, tenantID, sourceSystem, bizNo string) (*domain.TransferSaga, error) {
+	s := m.byBiz[sagaBizKey(tenantID, sourceSystem, bizNo)]
+	if s == nil {
+		return nil, domain.ErrNotFound
+	}
+	cp := *s
+	return &cp, nil
+}
+
+func (m *memSaga) ListOpen(ctx context.Context, tenantID string, limit int) ([]*domain.TransferSaga, error) {
+	return m.List(ctx, tenantID, "", limit)
+}
+
+func (m *memSaga) List(_ context.Context, tenantID, status string, limit int) ([]*domain.TransferSaga, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var out []*domain.TransferSaga
+	for _, s := range m.byID {
+		if tenantID != "" && s.TenantID != tenantID {
+			continue
+		}
+		if status != "" && s.Status != status {
+			continue
+		}
+		if status == "" && (s.Status == domain.SagaCompleted || s.Status == domain.SagaFailed) {
+			continue
+		}
+		cp := *s
+		out = append(out, &cp)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func TestSagaCrossShardResume(t *testing.T) {
+	ctx := context.Background()
+	b, st := setupBooks(t)
+	sgStore := newMemSaga()
+	b.WithSaga(sgStore)
+	b.UsePhase3(nil, nil, nil, nil, func(a, b string) bool { return a == b })
+	from := domain.Holder{Type: domain.HolderUser, ID: "u1"}
+	to := domain.Holder{Type: domain.HolderUser, ID: "u2"}
+	if _, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdCredit, TenantID: "t_default", SourceSystem: "wallet",
+		BizNo: "wallet:saga-in", Holder: from, AssetCode: "POINT", Amount: 40,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := b.Execute(ctx, domain.CommandRequest{
+		Command: domain.CmdTransfer, TenantID: "t_default", SourceSystem: "wallet",
+		BizNo: "wallet:saga-tf", Holder: from, ToHolder: &to, AssetCode: "POINT", Amount: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Account == nil || res.ToAccount == nil || res.Account.Available != "30" || res.ToAccount.Available != "10" {
+		t.Fatalf("saga transfer account=%+v to=%+v", res.Account, res.ToAccount)
+	}
+	open, err := b.ListSagas(ctx, "t_default", "", 10)
+	if err != nil || len(open) != 0 {
+		t.Fatalf("open sagas=%d err=%v", len(open), err)
+	}
+	done, err := b.ListSagas(ctx, "t_default", domain.SagaCompleted, 10)
+	if err != nil || len(done) != 1 {
+		t.Fatalf("completed sagas=%d err=%v", len(done), err)
+	}
+
+	pending := &domain.TransferSaga{
+		SagaID: "sg_resume", TenantID: "t_default", SourceSystem: "wallet", BizNo: "wallet:saga-resume",
+		FromType: from.Type, FromID: from.ID, ToType: to.Type, ToID: to.ID,
+		AssetCode: "POINT", Amount: 8, Status: domain.SagaPending,
+		OutBizNo: "wallet:saga-resume:xshard:out", InBizNo: "wallet:saga-resume:xshard:in",
+		RollbackNo: "wallet:saga-resume:xshard:rollback",
+	}
+	if err := sgStore.Create(ctx, pending); err != nil {
+		t.Fatal(err)
+	}
+	got, err := b.ResumeSaga(ctx, pending.SagaID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.SagaCompleted {
+		t.Fatalf("resume status=%s err=%s", got.Status, got.LastError)
+	}
+	fromAcc, _ := memAccount{st}.Get(ctx, "t_default", from, "POINT")
+	toAcc, _ := memAccount{st}.Get(ctx, "t_default", to, "POINT")
+	if fromAcc.Available != 22 || toAcc.Available != 18 {
+		t.Fatalf("after resume from=%d to=%d", fromAcc.Available, toAcc.Available)
+	}
+	n, err := b.ResumeOpenSagas(ctx, 10)
+	if err != nil || n != 0 {
+		t.Fatalf("no open sagas n=%d err=%v", n, err)
+	}
+}

@@ -112,3 +112,17 @@ type TenantRepository interface {
 type LimitRepository interface {
 	AddUsage(ctx context.Context, tenantID, source, holderID, asset string, cmd Command, date string, amount int64) (sum int64, count int, err error)
 }
+
+type SagaRepository interface {
+	Create(ctx context.Context, s *TransferSaga) error
+	Update(ctx context.Context, s *TransferSaga) error
+	Get(ctx context.Context, sagaID string) (*TransferSaga, error)
+	GetByBizNo(ctx context.Context, tenantID, sourceSystem, bizNo string) (*TransferSaga, error)
+	ListOpen(ctx context.Context, tenantID string, limit int) ([]*TransferSaga, error)
+	List(ctx context.Context, tenantID, status string, limit int) ([]*TransferSaga, error)
+}
+
+type NonceRepository interface {
+	Consume(ctx context.Context, clientID, nonce string, ttl time.Duration) error
+	DeleteBefore(ctx context.Context, before time.Time) (int64, error)
+}

@@ -482,6 +482,7 @@ function viewJobs() {
         <button onclick="runJob('expire')">资产过期入账</button>
         <button onclick="runJob('fx_feed')">汇率 Feed</button>
         <button class="ghost" onclick="runJob('idempotency')">清理幂等</button>
+        <button class="ghost" onclick="runJob('saga')">续跑 Saga</button>
       </div>
       <p class="muted">结果写入作业记录。过期入账仅在策略命中时过账；试算不记账。</p>
     </div>
@@ -492,6 +493,23 @@ function viewJobs() {
         <button class="ghost" onclick="loadExpirePreview()">试算</button>
       </div>
       <div id="expirePreview"></div>
+    </div>
+    <div class="card">
+      <h3>跨分片 Saga</h3>
+      <p class="muted">Worker 每 15s 扫描未完成 Saga。可按状态筛选，对单笔人工重试或补偿。</p>
+      <div class="row">
+        <select id="sagaStatus">
+          <option value="">未完成</option>
+          <option value="pending">pending</option>
+          <option value="out_done">out_done</option>
+          <option value="in_done">in_done</option>
+          <option value="compensating">compensating</option>
+          <option value="completed">completed</option>
+          <option value="failed">failed</option>
+        </select>
+        <button class="ghost" onclick="loadSagas()">刷新</button>
+      </div>
+      <div id="sagaTable"><p class="muted">加载中…</p></div>
     </div>
     <div class="card"><h3>最近作业结果</h3><div id="opsJobTable"><p class="muted">加载中…</p></div></div>`;
 }
@@ -801,11 +819,10 @@ async function refreshRecon() {
   } catch (e) { $('jobTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
   try {
     const files = await api('/api/v1/ledger/reconcile/files');
-    const tok = localStorage.getItem(TOKEN_KEY) || '';
     $('fileTable').innerHTML = table(
       [{label:'文件', key:'name', mono:true}, {label:'大小', key:'size'}, {label:'修改时间', key:'mod_time'}],
       files.data || [],
-      r => `<a href="/api/v1/ledger/reconcile/files/${encodeURIComponent(v(r,'name'))}?console_token=${encodeURIComponent(tok)}" target="_blank">下载</a>`
+      r => `<button class="ghost" onclick="downloadFile('${esc(v(r,'name'))}')">下载</button>`
     );
   } catch (e) { $('fileTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
 }
@@ -885,6 +902,63 @@ async function loadJobs() {
     );
   } catch (e) { if ($('opsJobTable')) $('opsJobTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
   loadExpirePreview().catch(() => {});
+  loadSagas().catch(() => {});
+}
+async function loadSagas() {
+  if (!$('sagaTable')) return;
+  const st = $('sagaStatus') ? $('sagaStatus').value : '';
+  const q = new URLSearchParams({limit: '50'});
+  if (st) q.set('status', st);
+  try {
+    const j = await api('/api/v1/ledger/ops/sagas?' + q.toString());
+    const rows = j.data || [];
+    $('sagaTable').innerHTML = table(
+      [{label:'Saga', key:'saga_id', mono:true}, {label:'biz_no', key:'biz_no', mono:true},
+       {label:'状态', html:true, value: r => badge(v(r,'status'))},
+       {label:'From', value: r => v(r,'from_id')}, {label:'To', value: r => v(r,'to_id')},
+       {label:'资产', key:'asset_code'}, {label:'金额', key:'amount', mono:true},
+       {label:'重试', key:'retry_count'}, {label:'错误', key:'last_error'}],
+      rows,
+      r => {
+        const id = esc(v(r,'saga_id'));
+        const done = String(v(r,'status')) === 'completed';
+        if (done) return '';
+        return `<button class="ghost" onclick="retrySaga('${id}')">重试</button>
+          <button class="warn" onclick="compensateSaga('${id}')">补偿</button>`;
+      }
+    );
+  } catch (e) { $('sagaTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
+}
+async function retrySaga(id) {
+  const j = await api('/api/v1/ledger/ops/sagas/' + encodeURIComponent(id) + '/retry', {method:'POST', body:'{}'});
+  const sg = j.data || {};
+  toast('Saga 重试 ' + (sg.status || ''));
+  loadSagas();
+  loadJobs();
+}
+async function compensateSaga(id) {
+  const confirmed = await confirmDialog('补偿跨分片 Saga', '将对已转出腿执行冲正。Saga：' + id, {
+    danger: true,
+    confirmText: '确认补偿'
+  });
+  if (!confirmed) return;
+  const j = await api('/api/v1/ledger/ops/sagas/' + encodeURIComponent(id) + '/compensate', {method:'POST', body:'{}'});
+  const sg = j.data || {};
+  toast('Saga 补偿 ' + (sg.status || ''));
+  loadSagas();
+  loadJobs();
+}
+async function downloadFile(name) {
+  const r = await api('/api/v1/ledger/reconcile/files/' + encodeURIComponent(name));
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 async function runJob(name) {
   const body = name === 'reconcile' ? JSON.stringify({date: new Date().toISOString().slice(0,10)}) : '{}';
@@ -911,7 +985,7 @@ async function loadAudit() {
   try {
     const j = await api('/api/v1/ledger/ops/audits?limit=50');
     if ($('gwAuditTable')) $('gwAuditTable').innerHTML = table(
-      [{label:'时间', key:'created_at'}, {label:'Client', key:'client_id'}, {label:'方法', key:'method'},
+      [{label:'时间', key:'created_at'}, {label:'Client', key:'client_id'}, {label:'租户', key:'tenant_id'}, {label:'方法', key:'method'},
        {label:'路径', key:'path', mono:true}, {label:'状态', key:'status'}, {label:'来源', key:'remote_addr'}],
       j.data || []
     );
