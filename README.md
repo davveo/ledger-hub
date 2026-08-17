@@ -9,6 +9,7 @@
 
 - 技术方案原文：[通用账本中台技术方案.md](./通用账本中台技术方案.md)
 - 整体架构图（可导出 PNG/PDF）：[docs/architecture.html](./docs/architecture.html)
+- 运营与接入文档：[docs/README.md](./docs/README.md)（[功能清单](./docs/01-功能清单.md) · [C 端手册](./docs/02-C端操作手册.md) · [运营端手册](./docs/03-运营端操作手册.md) · [API 参考](./docs/04-API快速参考.md)）
 
 ---
 
