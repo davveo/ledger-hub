@@ -24,11 +24,11 @@ import (
 )
 
 type Server struct {
-	cfg     config.GatewayConfig
-	proxy   *httputil.ReverseProxy
-	audit   domain.AuditRepository
-	nonce   domain.NonceRepository
-	ready   *observability.CachedCheck
+	cfg   config.GatewayConfig
+	proxy *httputil.ReverseProxy
+	audit domain.AuditRepository
+	nonce domain.NonceRepository
+	ready *observability.CachedCheck
 }
 
 func New(cfg config.GatewayConfig) (*Server, error) {
@@ -131,17 +131,37 @@ func (s *Server) auth() gin.HandlerFunc {
 		accept[sign.VersionV2] = true
 	}
 	return func(c *gin.Context) {
-		if s.cfg.ConsoleToken != "" {
-			if c.Query("console_token") != "" {
-				errresp.Abort(c, domain.Keyed(domain.CodeConsoleTokenInQuery, domain.KeyConsoleTokenInQuery))
-				return
-			}
+		if c.Query("console_token") != "" {
+			errresp.Abort(c, domain.Keyed(domain.CodeConsoleTokenInQuery, domain.KeyConsoleTokenInQuery))
+			return
+		}
+		if isPublicConsolePage(c) {
+			c.Next()
+			return
+		}
+		principals := s.cfg.ConsolePrincipals()
+		if len(principals) > 0 {
 			tok := c.GetHeader("X-Console-Token")
-			if tok != "" && hmac.Equal([]byte(tok), []byte(s.cfg.ConsoleToken)) {
-				c.Set("client_id", "console")
-				c.Set("tenant_id", c.GetHeader("X-Tenant-Id"))
-				c.Next()
-				return
+			if tok != "" {
+				if p, ok := matchConsoleToken(principals, tok); ok {
+					role := domain.NormalizeConsoleRole(p.Role)
+					c.Request.Header.Del("X-Console-Role")
+					c.Request.Header.Set("X-Console-Role", role)
+					if c.GetHeader("X-Operator") == "" && p.Operator != "" {
+						c.Request.Header.Set("X-Operator", p.Operator)
+					}
+					c.Set("client_id", "console")
+					c.Set("tenant_id", c.GetHeader("X-Tenant-Id"))
+					c.Set("console_role", role)
+					body, _ := io.ReadAll(c.Request.Body)
+					c.Request.Body = io.NopCloser(bytes.NewReader(body))
+					if !domain.ConsoleAllowed(role, c.Request.Method, c.Request.URL.Path, body) {
+						errresp.Abort(c, domain.ErrConsoleRoleDenied)
+						return
+					}
+					c.Next()
+					return
+				}
 			}
 		}
 		clientID := c.GetHeader("X-Client-Id")
@@ -283,6 +303,7 @@ func (s *Server) auditMW() gin.HandlerFunc {
 			Status:     c.Writer.Status(),
 			RemoteAddr: c.ClientIP(),
 			RequestID:  c.GetHeader("X-Request-Id"),
+			Operator:   c.GetHeader("X-Operator"),
 			CreatedAt:  time.Now().UTC(),
 		})
 	}
@@ -352,4 +373,21 @@ func (l *slotLimiter) over() bool {
 	over := l.count > l.rps
 	l.mu.Unlock()
 	return over
+}
+
+func isPublicConsolePage(c *gin.Context) bool {
+	if c == nil || (c.Request.Method != http.MethodGet && c.Request.Method != http.MethodHead) {
+		return false
+	}
+	p := strings.TrimSuffix(c.Request.URL.Path, "/")
+	return p == "/console"
+}
+
+func matchConsoleToken(list []config.ConsoleToken, tok string) (config.ConsoleToken, bool) {
+	for _, p := range list {
+		if hmac.Equal([]byte(p.Token), []byte(tok)) {
+			return p, true
+		}
+	}
+	return config.ConsoleToken{}, false
 }

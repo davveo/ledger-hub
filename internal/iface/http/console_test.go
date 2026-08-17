@@ -23,7 +23,7 @@ func TestConsolePage(t *testing.T) {
 		t.Fatalf("status %d", w.Code)
 	}
 	body := w.Body.String()
-	for _, want := range []string{"Ledger Hub", "首页", "资产", "对账", "风控", "作业", "审计", "过期待释放", "X-Operator", "/api/v1/ledger/console/overview", "modalBackdrop", "promptDialog", "confirmDialog", "downloadFile", "/ops/sagas", "retrySaga", "compensateSaga", "assignDiff", "queued-reconcile", "duration_ms", "instance_id", "config/revisions"} {
+	for _, want := range []string{"Ledger Hub", "首页", "资产", "对账", "风控", "作业", "审计", "过期待释放", "X-Operator", "/api/v1/ledger/console/overview", "/api/v1/ledger/console/me", "account_count", "format=csv", "modalBackdrop", "promptDialog", "confirmDialog", "downloadFile", "/ops/sagas", "retrySaga", "compensateSaga", "assignDiff", "queued-reconcile", "duration_ms", "instance_id", "config/revisions", "dev-console-readonly", "function can("} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("console html missing %q", want)
 		}
@@ -105,6 +105,53 @@ func TestParseTimeRangeRejectsIllegal(t *testing.T) {
 	from, to, err := parseTimeRange(c)
 	if err != nil || from == nil || to == nil {
 		t.Fatalf("valid range err=%v", err)
+	}
+}
+
+func TestHTTPConsoleMeAndRole(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := (&Server{tenant: "t_default"}).Engine()
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ledger/console/me", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"role":"admin"`) {
+		t.Fatalf("empty role want admin got %d %s", w.Code, w.Body.String())
+	}
+
+	w2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/api/v1/ledger/console/me", nil)
+	req2.Header.Set("X-Console-Role", "readonly")
+	req2.Header.Set("X-Operator", "viewer")
+	r.ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK || !strings.Contains(w2.Body.String(), `"role":"readonly"`) || !strings.Contains(w2.Body.String(), `"operator":"viewer"`) {
+		t.Fatalf("readonly me %d %s", w2.Code, w2.Body.String())
+	}
+
+	w3 := httptest.NewRecorder()
+	req3 := httptest.NewRequest(http.MethodPost, "/api/v1/ledger/commands/reverse", strings.NewReader(`{"source_system":"wallet","biz_no":"x","related_biz_no":"y"}`))
+	req3.Header.Set("Content-Type", "application/json")
+	req3.Header.Set("X-Console-Role", "readonly")
+	r.ServeHTTP(w3, req3)
+	if w3.Code != http.StatusForbidden || !strings.Contains(w3.Body.String(), "CONSOLE_ROLE_DENIED") {
+		t.Fatalf("readonly reverse want 40314 got %d %s", w3.Code, w3.Body.String())
+	}
+
+	w4 := httptest.NewRecorder()
+	req4 := httptest.NewRequest(http.MethodGet, "/api/v1/ledger/console/overview", nil)
+	r.ServeHTTP(w4, req4)
+	if w4.Code != http.StatusOK || !strings.Contains(w4.Body.String(), `"account_count":0`) {
+		t.Fatalf("overview count %d %s", w4.Code, w4.Body.String())
+	}
+
+	w5 := httptest.NewRecorder()
+	req5 := httptest.NewRequest(http.MethodGet, "/api/v1/ledger/ops/audits?format=csv", nil)
+	r.ServeHTTP(w5, req5)
+	if w5.Code != http.StatusOK || !strings.Contains(w5.Header().Get("Content-Type"), "text/csv") {
+		t.Fatalf("csv %d ctype=%s body=%s", w5.Code, w5.Header().Get("Content-Type"), w5.Body.String())
+	}
+	if !strings.Contains(w5.Body.String(), "operator") {
+		t.Fatalf("csv header %s", w5.Body.String())
 	}
 }
 

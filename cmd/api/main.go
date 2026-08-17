@@ -108,7 +108,7 @@ func main() {
 		Status:   "active",
 	})
 	_ = application.SeedAssets(context.Background(), assetSvc, cfg.App.DefaultTenant)
-	if err := application.SeedDemo(context.Background(), books, assetSvc, accountSvc, tenantSvc, fxSvc, recon, cfg.App.DefaultTenant); err != nil {
+	if err := application.SeedDemo(context.Background(), books, assetSvc, accountSvc, tenantSvc, fxSvc, recon, repos.Saga, cfg.App.DefaultTenant); err != nil {
 		zapLog.Warn("seed demo data", zap.Error(err))
 	}
 

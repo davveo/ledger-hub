@@ -9,8 +9,8 @@ import (
 )
 
 // SeedDemo 写入一套可重复执行的演示账，全部走记账命令，余额 / 冻结 / 流水自洽。
-// 覆盖运营台：租户、资产、多币种账户、流水、冻结、汇率、冲正、对账差异、限额告警。
-func SeedDemo(ctx context.Context, books *Bookkeeping, assets *AssetService, accounts *AccountService, tenants *TenantService, fx *FxService, recon *ReconcileService, tenantID string) error {
+// 覆盖运营台：租户、资产、多币种账户、流水、冻结、汇率、冲正、对账差异、限额告警、未完成 Saga。
+func SeedDemo(ctx context.Context, books *Bookkeeping, assets *AssetService, accounts *AccountService, tenants *TenantService, fx *FxService, recon *ReconcileService, sagas domain.SagaRepository, tenantID string) error {
 	if books == nil || assets == nil || tenantID == "" {
 		return nil
 	}
@@ -183,6 +183,9 @@ func SeedDemo(ctx context.Context, books *Bookkeeping, assets *AssetService, acc
 			return err
 		}
 	}
+	if err := seedDemoSagas(ctx, sagas, tenantID); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -277,6 +280,51 @@ func decorateDemoDiffs(ctx context.Context, recon *ReconcileService, tenantIDs .
 					return err
 				}
 			}
+		}
+	}
+	return nil
+}
+
+func seedDemoSagas(ctx context.Context, sagas domain.SagaRepository, tenantID string) error {
+	if sagas == nil || tenantID == "" {
+		return nil
+	}
+	now := time.Now().UTC()
+	demos := []*domain.TransferSaga{
+		{
+			SagaID: "sg_demo_pending", TenantID: tenantID, SourceSystem: "wallet",
+			BizNo: "wallet:demo:saga:pending", FromType: domain.HolderUser, FromID: "u_saga_from",
+			ToType: domain.HolderUser, ToID: "u_saga_to", AssetCode: "POINT", Amount: 100,
+			Status: domain.SagaPending, ResultJSON: domain.DemoSagaJSON,
+			LastError: "演示：跨分片转账尚未扣出账", CreatedAt: now.Add(-20 * time.Minute),
+		},
+		{
+			SagaID: "sg_demo_out_done", TenantID: tenantID, SourceSystem: "wallet",
+			BizNo: "wallet:demo:saga:out_done", FromType: domain.HolderUser, FromID: "u_saga_from",
+			ToType: domain.HolderUser, ToID: "u_saga_to", AssetCode: "POINT", Amount: 80,
+			Status: domain.SagaOutDone, OutBizNo: "wallet:demo:saga:out_done:out",
+			ResultJSON: domain.DemoSagaJSON, LastError: "演示：出账完成，入账未达",
+			CreatedAt: now.Add(-12 * time.Minute),
+		},
+		{
+			SagaID: "sg_demo_compensating", TenantID: tenantID, SourceSystem: "wallet",
+			BizNo: "wallet:demo:saga:compensating", FromType: domain.HolderUser, FromID: "u_saga_from",
+			ToType: domain.HolderUser, ToID: "u_saga_to", AssetCode: "POINT", Amount: 50,
+			Status: domain.SagaCompensating, OutBizNo: "wallet:demo:saga:compensating:out",
+			RollbackNo: "wallet:demo:saga:compensating:rollback", ResultJSON: domain.DemoSagaJSON,
+			LastError: "演示：入账失败，补偿中", CreatedAt: now.Add(-5 * time.Minute),
+		},
+	}
+	for _, sg := range demos {
+		existing, err := sagas.GetByBizNo(ctx, sg.TenantID, sg.SourceSystem, sg.BizNo)
+		if err == nil && existing != nil {
+			continue
+		}
+		if err != nil && !domain.Is(err, domain.CodeNotFound) {
+			return err
+		}
+		if err := sagas.Create(ctx, sg); err != nil {
+			return fmt.Errorf("demo saga %s: %w", sg.BizNo, err)
 		}
 	}
 	return nil

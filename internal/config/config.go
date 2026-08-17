@@ -52,13 +52,20 @@ type LogConfig struct {
 }
 
 type GatewayConfig struct {
-	Upstream           string       `mapstructure:"upstream"`
-	RateLimitRPS       int          `mapstructure:"rate_limit_rps"`
-	MaxSkewSeconds     int          `mapstructure:"max_skew_seconds"`
-	ConsoleToken       string       `mapstructure:"console_token"`
-	DefaultTenant      string       `mapstructure:"default_tenant"`
-	AcceptSignVersions []string     `mapstructure:"accept_sign_versions"`
-	Clients            []ClientAuth `mapstructure:"clients"`
+	Upstream           string         `mapstructure:"upstream"`
+	RateLimitRPS       int            `mapstructure:"rate_limit_rps"`
+	MaxSkewSeconds     int            `mapstructure:"max_skew_seconds"`
+	ConsoleToken       string         `mapstructure:"console_token"`
+	ConsoleTokens      []ConsoleToken `mapstructure:"console_tokens"`
+	DefaultTenant      string         `mapstructure:"default_tenant"`
+	AcceptSignVersions []string       `mapstructure:"accept_sign_versions"`
+	Clients            []ClientAuth   `mapstructure:"clients"`
+}
+
+type ConsoleToken struct {
+	Token    string `mapstructure:"token"`
+	Role     string `mapstructure:"role"`
+	Operator string `mapstructure:"operator"`
 }
 
 type ClientAuth struct {
@@ -205,6 +212,30 @@ func clientSecretEnv(clientID string) string {
 	return "LEDGER_GATEWAY_CLIENT_" + id + "_SECRET"
 }
 
+func (g GatewayConfig) ConsolePrincipals() []ConsoleToken {
+	out := make([]ConsoleToken, 0, len(g.ConsoleTokens)+1)
+	seen := map[string]bool{}
+	for _, t := range g.ConsoleTokens {
+		tok := strings.TrimSpace(t.Token)
+		if tok == "" {
+			continue
+		}
+		t.Token = tok
+		if strings.TrimSpace(t.Role) == "" {
+			t.Role = "admin"
+		}
+		if strings.TrimSpace(t.Operator) == "" {
+			t.Operator = "console"
+		}
+		out = append(out, t)
+		seen[tok] = true
+	}
+	if tok := strings.TrimSpace(g.ConsoleToken); tok != "" && !seen[tok] {
+		out = append(out, ConsoleToken{Token: tok, Role: "admin", Operator: "console"})
+	}
+	return out
+}
+
 func IsProd(env string) bool {
 	e := strings.ToLower(strings.TrimSpace(env))
 	return e == "prod" || e == "production"
@@ -220,6 +251,12 @@ func (c *Config) ValidateForEnv() error {
 	token := strings.TrimSpace(c.Gateway.ConsoleToken)
 	if token == "" || token == "dev-console-token" {
 		return fmt.Errorf("production 拒绝默认或空的 console_token，请设置 LEDGER_GATEWAY_CONSOLE_TOKEN")
+	}
+	for _, t := range c.Gateway.ConsoleTokens {
+		sec := strings.TrimSpace(t.Token)
+		if sec == "" || strings.HasPrefix(sec, "dev-") {
+			return fmt.Errorf("production 拒绝空或 dev- 前缀的 console_tokens.token，请替换运营 Token")
+		}
 	}
 	for _, cl := range c.Gateway.Clients {
 		sec := strings.TrimSpace(cl.Secret)

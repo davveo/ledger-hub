@@ -123,6 +123,14 @@ func (s *AccountService) List(ctx context.Context, tenantID, assetCode string) (
 	return s.accs.ListByTenant(ctx, tenantID, assetCode)
 }
 
+func (s *AccountService) Count(ctx context.Context, tenantID, assetCode string) (int64, error) {
+	return s.accs.CountByTenant(ctx, tenantID, assetCode)
+}
+
+func (s *AccountService) ListRecent(ctx context.Context, tenantID, assetCode string, limit int) ([]*domain.Account, error) {
+	return s.accs.ListRecentByTenant(ctx, tenantID, assetCode, limit)
+}
+
 func (s *AccountService) ListByHolder(ctx context.Context, tenantID string, holder domain.Holder, assetCode string) ([]*domain.Account, error) {
 	if holder.ID == "" {
 		return nil, domain.ErrInvalidParam

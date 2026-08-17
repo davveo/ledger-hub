@@ -29,6 +29,16 @@ gateway:
   rate_limit_rps: 200
   max_skew_seconds: 300
   console_token: "dev-console-token"
+  console_tokens:
+    - token: "dev-console-readonly"
+      role: readonly
+      operator: viewer
+    - token: "dev-console-ops"
+      role: correction
+      operator: ops_zhang
+    - token: "dev-console-jobs"
+      role: jobs
+      operator: ops_jobs
   default_tenant: t_default
   accept_sign_versions: [v1, v2]
   clients:

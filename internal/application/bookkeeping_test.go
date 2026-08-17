@@ -110,6 +110,26 @@ func (r memAccount) ListByTenant(_ context.Context, tenant, asset string) ([]*do
 	}
 	return out, nil
 }
+func (r memAccount) CountByTenant(ctx context.Context, tenant, asset string) (int64, error) {
+	list, err := r.ListByTenant(ctx, tenant, asset)
+	return int64(len(list)), err
+}
+func (r memAccount) ListRecentByTenant(ctx context.Context, tenant, asset string, limit int) ([]*domain.Account, error) {
+	list, err := r.ListByTenant(ctx, tenant, asset)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 8
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	if len(list) > limit {
+		list = list[:limit]
+	}
+	return list, nil
+}
 func (r memAccount) ListByHolder(_ context.Context, tenant string, h domain.Holder, asset string) ([]*domain.Account, error) {
 	var out []*domain.Account
 	for _, a := range r.m.accs {

@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 
 	"gorm.io/gorm"
@@ -185,6 +186,54 @@ func (r *AccountRepo) ListByTenant(ctx context.Context, tenantID, assetCode stri
 		for i := range rows {
 			out = append(out, rows[i].toDomain())
 		}
+	}
+	return out, nil
+}
+
+func (r *AccountRepo) CountByTenant(ctx context.Context, tenantID, assetCode string) (int64, error) {
+	var total int64
+	for _, db := range scanDBs(ctx, r.cluster, r.db) {
+		q := db.Model(&LedgerAccount{}).Where("tenant_id = ?", tenantID)
+		if assetCode != "" {
+			q = q.Where("asset_code = ?", assetCode)
+		}
+		var n int64
+		if err := q.Count(&n).Error; err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return total, nil
+}
+
+func (r *AccountRepo) ListRecentByTenant(ctx context.Context, tenantID, assetCode string, limit int) ([]*domain.Account, error) {
+	if limit <= 0 {
+		limit = 8
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	var rows []LedgerAccount
+	for _, db := range scanDBs(ctx, r.cluster, r.db) {
+		q := db.Where("tenant_id = ?", tenantID)
+		if assetCode != "" {
+			q = q.Where("asset_code = ?", assetCode)
+		}
+		var part []LedgerAccount
+		if err := q.Order("updated_at desc").Limit(limit).Find(&part).Error; err != nil {
+			return nil, err
+		}
+		rows = append(rows, part...)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].UpdatedAt.After(rows[j].UpdatedAt)
+	})
+	if len(rows) > limit {
+		rows = rows[:limit]
+	}
+	out := make([]*domain.Account, 0, len(rows))
+	for i := range rows {
+		out = append(out, rows[i].toDomain())
 	}
 	return out, nil
 }

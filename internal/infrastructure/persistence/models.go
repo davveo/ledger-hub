@@ -8,18 +8,18 @@ import (
 )
 
 type LedgerAsset struct {
-	ID               uint64    `gorm:"primaryKey;autoIncrement"`
-	TenantID         string    `gorm:"size:64;uniqueIndex:uk_tenant_asset;not null"`
-	AssetCode        string    `gorm:"size:64;uniqueIndex:uk_tenant_asset;not null"`
-	Name             string    `gorm:"size:128;not null"`
-	AssetClass       string    `gorm:"size:32;not null"`
-	CurrencyCode     string    `gorm:"size:16;not null"`
-	Precision        int       `gorm:"not null"`
-	HolderTypes      string    `gorm:"type:text"`
-	FreezeSupported  bool      `gorm:"not null"`
-	OverdraftAllowed bool      `gorm:"not null"`
-	Status           string    `gorm:"size:16;not null"`
-	Ext              string    `gorm:"type:text"`
+	ID               uint64 `gorm:"primaryKey;autoIncrement"`
+	TenantID         string `gorm:"size:64;uniqueIndex:uk_tenant_asset;not null"`
+	AssetCode        string `gorm:"size:64;uniqueIndex:uk_tenant_asset;not null"`
+	Name             string `gorm:"size:128;not null"`
+	AssetClass       string `gorm:"size:32;not null"`
+	CurrencyCode     string `gorm:"size:16;not null"`
+	Precision        int    `gorm:"not null"`
+	HolderTypes      string `gorm:"type:text"`
+	FreezeSupported  bool   `gorm:"not null"`
+	OverdraftAllowed bool   `gorm:"not null"`
+	Status           string `gorm:"size:16;not null"`
+	Ext              string `gorm:"type:text"`
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
@@ -89,28 +89,29 @@ func (m *LedgerAccount) toDomain() *domain.Account {
 		Frozen:     m.Frozen,
 		Version:    m.Version,
 		Status:     domain.AccountStatus(m.Status),
+		UpdatedAt:  m.UpdatedAt,
 	}
 }
 
 type LedgerEntry struct {
-	ID             uint64 `gorm:"primaryKey;autoIncrement"`
-	EntryID        string `gorm:"size:64;uniqueIndex;not null"`
-	AccountID      string `gorm:"size:64;index;not null"`
+	ID             uint64    `gorm:"primaryKey;autoIncrement"`
+	EntryID        string    `gorm:"size:64;uniqueIndex;not null"`
+	AccountID      string    `gorm:"size:64;index;not null"`
 	TenantID       string    `gorm:"size:64;index:idx_entry_recon,priority:1;not null"`
 	AssetCode      string    `gorm:"size:64;index:idx_entry_recon,priority:3;not null"`
-	HolderType     string `gorm:"size:32;not null"`
-	HolderID       string `gorm:"size:64;not null"`
-	Direction      string `gorm:"size:8;not null"`
-	Amount         int64  `gorm:"not null"`
-	AvailableAfter int64  `gorm:"not null"`
-	FrozenAfter    int64  `gorm:"not null"`
-	Command        string `gorm:"size:32;not null"`
+	HolderType     string    `gorm:"size:32;not null"`
+	HolderID       string    `gorm:"size:64;not null"`
+	Direction      string    `gorm:"size:8;not null"`
+	Amount         int64     `gorm:"not null"`
+	AvailableAfter int64     `gorm:"not null"`
+	FrozenAfter    int64     `gorm:"not null"`
+	Command        string    `gorm:"size:32;not null"`
 	SourceSystem   string    `gorm:"size:64;index:idx_entry_recon,priority:2;not null"`
-	BizType        string `gorm:"size:64"`
-	BizNo          string `gorm:"size:128;index;not null"`
-	JournalID      string `gorm:"size:64;index"`
-	FreezeID       string `gorm:"size:64;index"`
-	RelatedBizNo   string `gorm:"size:128"`
+	BizType        string    `gorm:"size:64"`
+	BizNo          string    `gorm:"size:128;index;not null"`
+	JournalID      string    `gorm:"size:64;index"`
+	FreezeID       string    `gorm:"size:64;index"`
+	RelatedBizNo   string    `gorm:"size:128"`
 	CreatedAt      time.Time `gorm:"index:idx_entry_recon,priority:4;index"`
 }
 
@@ -233,18 +234,18 @@ func (m *LedgerJournal) toDomain() *domain.Journal {
 func (LedgerJournal) TableName() string { return "ledger_journal" }
 
 type LedgerFxRate struct {
-	ID          uint64 `gorm:"primaryKey;autoIncrement"`
-	RateID      string `gorm:"size:64;uniqueIndex;not null"`
-	TenantID    string `gorm:"size:64;index;not null"`
-	BaseAsset   string `gorm:"size:64;not null"`
-	QuoteAsset  string `gorm:"size:64;not null"`
-	Rate        string `gorm:"size:32;not null"`
-	RateSource  string `gorm:"size:16;not null"`
-	ValidFrom   *time.Time
-	ValidTo     *time.Time
-	QuotedAt    time.Time
-	CreatedBy   string `gorm:"size:64"`
-	CreatedAt   time.Time
+	ID         uint64 `gorm:"primaryKey;autoIncrement"`
+	RateID     string `gorm:"size:64;uniqueIndex;not null"`
+	TenantID   string `gorm:"size:64;index;not null"`
+	BaseAsset  string `gorm:"size:64;not null"`
+	QuoteAsset string `gorm:"size:64;not null"`
+	Rate       string `gorm:"size:32;not null"`
+	RateSource string `gorm:"size:16;not null"`
+	ValidFrom  *time.Time
+	ValidTo    *time.Time
+	QuotedAt   time.Time
+	CreatedBy  string `gorm:"size:64"`
+	CreatedAt  time.Time
 }
 
 func (LedgerFxRate) TableName() string { return "ledger_fx_rate" }
@@ -291,12 +292,12 @@ type LedgerReconcileDiff struct {
 }
 
 type LedgerReconcileDiffEvent struct {
-	ID        uint64 `gorm:"primaryKey;autoIncrement"`
-	EventID   string `gorm:"size:64;uniqueIndex;not null"`
-	DiffID    string `gorm:"size:64;index;not null"`
-	Action    string `gorm:"size:32;not null"`
-	Operator  string `gorm:"size:64"`
-	Detail    string `gorm:"type:text"`
+	ID        uint64    `gorm:"primaryKey;autoIncrement"`
+	EventID   string    `gorm:"size:64;uniqueIndex;not null"`
+	DiffID    string    `gorm:"size:64;index;not null"`
+	Action    string    `gorm:"size:32;not null"`
+	Operator  string    `gorm:"size:64"`
+	Detail    string    `gorm:"type:text"`
 	CreatedAt time.Time `gorm:"index"`
 }
 
@@ -392,42 +393,43 @@ func (m *LedgerFxRate) toDomain() *domain.FxRate {
 }
 
 type LedgerGatewayAudit struct {
-	ID         uint64 `gorm:"primaryKey;autoIncrement"`
-	AuditID    string `gorm:"size:64;uniqueIndex;not null"`
-	ClientID   string `gorm:"size:64;index;not null"`
-	TenantID   string `gorm:"size:64;index"`
-	Method     string `gorm:"size:16;not null"`
-	Path       string `gorm:"size:255;not null"`
-	Status     int    `gorm:"not null"`
-	RemoteAddr string `gorm:"size:64"`
-	RequestID  string `gorm:"size:64;index"`
+	ID         uint64    `gorm:"primaryKey;autoIncrement"`
+	AuditID    string    `gorm:"size:64;uniqueIndex;not null"`
+	ClientID   string    `gorm:"size:64;index;not null"`
+	TenantID   string    `gorm:"size:64;index"`
+	Method     string    `gorm:"size:16;not null"`
+	Path       string    `gorm:"size:255;not null"`
+	Status     int       `gorm:"not null"`
+	RemoteAddr string    `gorm:"size:64"`
+	RequestID  string    `gorm:"size:64;index"`
+	Operator   string    `gorm:"size:64;index"`
 	CreatedAt  time.Time `gorm:"index"`
 }
 
 func (LedgerGatewayAudit) TableName() string { return "ledger_gateway_audit" }
 
 type LedgerLimitAlert struct {
-	ID           uint64 `gorm:"primaryKey;autoIncrement"`
-	AlertID      string `gorm:"size:64;uniqueIndex;not null"`
-	TenantID     string `gorm:"size:64;index;not null"`
-	SourceSystem string `gorm:"size:64"`
-	HolderID     string `gorm:"size:64;index"`
-	AssetCode    string `gorm:"size:64"`
-	Command      string `gorm:"size:32"`
-	Reason       string `gorm:"size:128"`
+	ID           uint64    `gorm:"primaryKey;autoIncrement"`
+	AlertID      string    `gorm:"size:64;uniqueIndex;not null"`
+	TenantID     string    `gorm:"size:64;index;not null"`
+	SourceSystem string    `gorm:"size:64"`
+	HolderID     string    `gorm:"size:64;index"`
+	AssetCode    string    `gorm:"size:64"`
+	Command      string    `gorm:"size:32"`
+	Reason       string    `gorm:"size:128"`
 	CreatedAt    time.Time `gorm:"index"`
 }
 
 func (LedgerLimitAlert) TableName() string { return "ledger_limit_alert" }
 
 type LedgerOpsAudit struct {
-	ID        uint64 `gorm:"primaryKey;autoIncrement"`
-	AuditID   string `gorm:"size:64;uniqueIndex;not null"`
-	Operator  string `gorm:"size:64;index;not null"`
-	Action    string `gorm:"size:32;index;not null"`
-	TenantID  string `gorm:"size:64;index"`
-	Target    string `gorm:"size:128"`
-	Detail    string `gorm:"type:text"`
+	ID        uint64    `gorm:"primaryKey;autoIncrement"`
+	AuditID   string    `gorm:"size:64;uniqueIndex;not null"`
+	Operator  string    `gorm:"size:64;index;not null"`
+	Action    string    `gorm:"size:32;index;not null"`
+	TenantID  string    `gorm:"size:64;index"`
+	Target    string    `gorm:"size:128"`
+	Detail    string    `gorm:"type:text"`
 	CreatedAt time.Time `gorm:"index"`
 }
 
@@ -477,9 +479,9 @@ type LedgerTransferSaga struct {
 func (LedgerTransferSaga) TableName() string { return "ledger_transfer_saga" }
 
 type LedgerGatewayNonce struct {
-	ID        uint64 `gorm:"primaryKey;autoIncrement"`
-	ClientID  string `gorm:"size:64;uniqueIndex:uk_gw_nonce;not null"`
-	Nonce     string `gorm:"size:64;uniqueIndex:uk_gw_nonce;not null"`
+	ID        uint64    `gorm:"primaryKey;autoIncrement"`
+	ClientID  string    `gorm:"size:64;uniqueIndex:uk_gw_nonce;not null"`
+	Nonce     string    `gorm:"size:64;uniqueIndex:uk_gw_nonce;not null"`
 	CreatedAt time.Time `gorm:"index"`
 }
 
@@ -496,12 +498,12 @@ type LedgerJobLease struct {
 func (LedgerJobLease) TableName() string { return "ledger_job_lease" }
 
 type LedgerConfigRevision struct {
-	ID         uint64 `gorm:"primaryKey;autoIncrement"`
-	RevisionID string `gorm:"size:64;uniqueIndex;not null"`
-	Version    int64  `gorm:"uniqueIndex;not null"`
-	Operator   string `gorm:"size:64"`
-	Checksum   string `gorm:"size:64"`
-	Payload    string `gorm:"type:text"`
+	ID         uint64    `gorm:"primaryKey;autoIncrement"`
+	RevisionID string    `gorm:"size:64;uniqueIndex;not null"`
+	Version    int64     `gorm:"uniqueIndex;not null"`
+	Operator   string    `gorm:"size:64"`
+	Checksum   string    `gorm:"size:64"`
+	Payload    string    `gorm:"type:text"`
 	AppliedAt  time.Time `gorm:"index"`
 }
 
@@ -515,7 +517,7 @@ type LedgerMQInbox struct {
 	Payload       string `gorm:"type:text"`
 	Status        string `gorm:"size:16;index;not null"`
 	Attempts      int
-	LastError     string `gorm:"type:text"`
+	LastError     string     `gorm:"type:text"`
 	NextRetryAt   *time.Time `gorm:"index"`
 	CreatedAt     time.Time
 	UpdatedAt     time.Time

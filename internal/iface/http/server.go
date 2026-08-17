@@ -1,6 +1,8 @@
 package httpserver
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -82,6 +84,7 @@ func (s *Server) Engine() *gin.Engine {
 	r.GET("/", func(c *gin.Context) { c.Redirect(http.StatusFound, "/console") })
 	r.GET("/console", s.consolePage)
 	g := r.Group("/api/v1/ledger")
+	g.Use(s.consoleRole())
 	{
 		g.POST("/assets", s.registerAsset)
 		g.GET("/assets", s.listAssets)
@@ -147,6 +150,7 @@ func (s *Server) Engine() *gin.Engine {
 		g.GET("/reconcile/diffs/:id/events", s.listDiffEvents)
 
 		g.GET("/console/overview", s.consoleOverview)
+		g.GET("/console/me", s.consoleMe)
 	}
 	return r
 }
@@ -843,11 +847,49 @@ func (s *Server) getTenant(c *gin.Context) {
 	ok(c, t)
 }
 
+func (s *Server) consoleRole() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		role := strings.TrimSpace(c.GetHeader("X-Console-Role"))
+		if role == "" {
+			c.Next()
+			return
+		}
+		body, _ := io.ReadAll(c.Request.Body)
+		c.Request.Body = io.NopCloser(bytes.NewReader(body))
+		if !domain.ConsoleAllowed(role, c.Request.Method, c.Request.URL.Path, body) {
+			fail(c, domain.ErrConsoleRoleDenied)
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+func (s *Server) consoleMe(c *gin.Context) {
+	ok(c, gin.H{
+		"role":     domain.NormalizeConsoleRole(c.GetHeader("X-Console-Role")),
+		"operator": s.operator(c),
+	})
+}
+
 func (s *Server) consoleOverview(c *gin.Context) {
 	ctx := c.Request.Context()
 	tenant := s.tenantID(c, "")
-	assets, _ := s.assets.List(ctx, tenant)
-	accs, _ := s.accounts.List(ctx, tenant, c.Query("asset_code"))
+	asset := c.Query("asset_code")
+	var assets []*domain.Asset
+	if s.assets != nil {
+		assets, _ = s.assets.List(ctx, tenant)
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	if limit <= 0 {
+		limit = 8
+	}
+	var accountCount int64
+	var accs []*domain.Account
+	if s.accounts != nil {
+		accountCount, _ = s.accounts.Count(ctx, tenant, asset)
+		accs, _ = s.accounts.ListRecent(ctx, tenant, asset, limit)
+	}
 	accViews := make([]gin.H, 0, len(accs))
 	for _, acc := range accs {
 		accViews = append(accViews, accountView(acc))
@@ -873,14 +915,15 @@ func (s *Server) consoleOverview(c *gin.Context) {
 		alerts = s.limiter.ListAlerts(ctx, tenant, 50)
 	}
 	ok(c, gin.H{
-		"tenant_id": tenant,
-		"tenants":   tenants,
-		"assets":    assets,
-		"accounts":  accViews,
-		"fx_rates":  rates,
-		"limits":    limits,
-		"acl":       aclRules,
-		"alerts":    alerts,
+		"tenant_id":     tenant,
+		"tenants":       tenants,
+		"assets":        assets,
+		"account_count": accountCount,
+		"accounts":      accViews,
+		"fx_rates":      rates,
+		"limits":        limits,
+		"acl":           aclRules,
+		"alerts":        alerts,
 	})
 }
 
@@ -969,6 +1012,7 @@ func accountView(acc *domain.Account) gin.H {
 		"frozen":      strconv.FormatInt(acc.Frozen, 10),
 		"version":     acc.Version,
 		"status":      acc.Status,
+		"updated_at":  acc.UpdatedAt,
 	}
 }
 

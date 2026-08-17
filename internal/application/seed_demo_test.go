@@ -21,10 +21,10 @@ func TestSeedDemoBalances(t *testing.T) {
 	}}, memLimit{}), nil)
 	assets := NewAssetService(st)
 	accs := NewAccountService(st, memAccount{st})
-	if err := SeedDemo(ctx, b, assets, accs, nil, nil, nil, "t_default"); err != nil {
+	if err := SeedDemo(ctx, b, assets, accs, nil, nil, nil, nil, "t_default"); err != nil {
 		t.Fatal(err)
 	}
-	if err := SeedDemo(ctx, b, assets, accs, nil, nil, nil, "t_default"); err != nil {
+	if err := SeedDemo(ctx, b, assets, accs, nil, nil, nil, nil, "t_default"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -153,5 +153,35 @@ func TestSeedDemoBalances(t *testing.T) {
 	gamer, err := memAccount{st}.Get(ctx, "t_game", domain.Holder{Type: domain.HolderUser, ID: "u_gamer"}, "POINT")
 	if err != nil || gamer.Available != 11150 || gamer.Frozen != 800 {
 		t.Fatalf("gamer POINT %+v err=%v", gamer, err)
+	}
+}
+
+func TestSeedDemoOpenSagas(t *testing.T) {
+	ctx := context.Background()
+	b, st := setupBooks(t)
+	sg := newMemSaga()
+	b.WithSaga(sg)
+	assets := NewAssetService(st)
+	accs := NewAccountService(st, memAccount{st})
+	if err := SeedDemo(ctx, b, assets, accs, nil, nil, nil, sg, "t_default"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SeedDemo(ctx, b, assets, accs, nil, nil, nil, sg, "t_default"); err != nil {
+		t.Fatal(err)
+	}
+	open, err := sg.ListOpen(ctx, "t_default", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 3 {
+		t.Fatalf("want 3 demo sagas, got %d", len(open))
+	}
+	n, err := b.ResumeOpenSagas(ctx, 20)
+	if err != nil || n != 0 {
+		t.Fatalf("worker must skip demo sagas n=%d err=%v", n, err)
+	}
+	open, err = sg.ListOpen(ctx, "t_default", 20)
+	if err != nil || len(open) != 3 {
+		t.Fatalf("demo sagas still open n=%d err=%v", len(open), err)
 	}
 }

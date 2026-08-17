@@ -125,6 +125,9 @@ func (s *Bookkeeping) ResumeOpenSagas(ctx context.Context, limit int) (int, erro
 	}
 	n := 0
 	for _, sg := range list {
+		if domain.IsDemoSaga(sg.ResultJSON) {
+			continue
+		}
 		req := sagaRequest(sg)
 		hash := requestHash(req)
 		if _, err := s.resumeSaga(ctx, sg, &req, hash); err == nil {

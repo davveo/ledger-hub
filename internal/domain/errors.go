@@ -57,6 +57,7 @@ const (
 	CodeTenantHeaderMismatch    = 40311
 	CodeTenantNotAllowed        = 40312
 	CodeTenantDisabled          = 40313
+	CodeConsoleRoleDenied       = 40314
 
 	CodeNotFound                = 40401
 	CodeIdempotencyConflict     = 40901
@@ -130,6 +131,7 @@ const (
 	KeyTenantHeaderMismatch    Key = "TENANT_HEADER_MISMATCH"
 	KeyTenantNotAllowed        Key = "TENANT_NOT_ALLOWED"
 	KeyTenantDisabled          Key = "TENANT_DISABLED"
+	KeyConsoleRoleDenied       Key = "CONSOLE_ROLE_DENIED"
 	KeyNotFound                Key = "NOT_FOUND"
 	KeyIdempotencyConflict     Key = "IDEMPOTENCY_CONFLICT"
 	KeyInsufficient            Key = "INSUFFICIENT_BALANCE"
@@ -214,6 +216,7 @@ var (
 	ErrUnauthorized        = Keyed(CodeUnauthorized, KeyUnauthorized)
 	ErrReplay              = Keyed(CodeReplay, KeyReplay)
 	ErrForbidden           = Keyed(CodeForbidden, KeyForbidden)
+	ErrConsoleRoleDenied   = Keyed(CodeConsoleRoleDenied, KeyConsoleRoleDenied)
 	ErrNotFound            = Keyed(CodeNotFound, KeyNotFound)
 	ErrIdempotencyConflict = Keyed(CodeIdempotencyConflict, KeyIdempotencyConflict)
 	ErrInsufficient        = Keyed(CodeInsufficient, KeyInsufficient)

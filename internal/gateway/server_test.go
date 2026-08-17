@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -207,6 +208,90 @@ func TestGatewayRootRedirectsToConsole(t *testing.T) {
 	}
 }
 
+func TestGatewayPublicConsoleHTML(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("<html>ok</html>"))
+	}))
+	defer up.Close()
+	gw, err := New(config.GatewayConfig{
+		Upstream:     up.URL,
+		ConsoleToken: "tok",
+		Clients:      []config.ClientAuth{{ClientID: "wallet", Secret: "s"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(gw.Engine())
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/console", nil)
+	code, body := doGW(t, srv, req)
+	if code != http.StatusOK {
+		t.Fatalf("GET /console without token want 200 got %d body=%s", code, body)
+	}
+
+	req, _ = http.NewRequest(http.MethodGet, srv.URL+"/api/v1/ledger/accounts", nil)
+	code, _ = doGW(t, srv, req)
+	if code != http.StatusUnauthorized {
+		t.Fatalf("GET /api without token want 401 got %d", code)
+	}
+}
+
+func TestGatewayConsoleRoles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	var sawRole string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawRole = r.Header.Get("X-Console-Role")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"code":0}`))
+	}))
+	defer up.Close()
+	gw, err := New(config.GatewayConfig{
+		Upstream:     up.URL,
+		ConsoleToken: "tok-admin",
+		ConsoleTokens: []config.ConsoleToken{
+			{Token: "tok-ro", Role: "readonly", Operator: "viewer"},
+			{Token: "tok-ops", Role: "correction", Operator: "ops_zhang"},
+		},
+		Clients: []config.ClientAuth{{ClientID: "wallet", Secret: "s"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(gw.Engine())
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/ledger/commands/reverse", bytes.NewBufferString(`{"source_system":"wallet","biz_no":"x","related_biz_no":"y"}`))
+	req.Header.Set("X-Console-Token", "tok-ro")
+	req.Header.Set("Content-Type", "application/json")
+	code, body := doGW(t, srv, req)
+	if code != http.StatusForbidden || jsonCode(body) != domain.CodeConsoleRoleDenied {
+		t.Fatalf("readonly reverse want 403/40314 got %d body=%s", code, body)
+	}
+
+	req, _ = http.NewRequest(http.MethodPost, srv.URL+"/api/v1/ledger/commands/reverse", bytes.NewBufferString(`{"source_system":"wallet","biz_no":"x","related_biz_no":"y"}`))
+	req.Header.Set("X-Console-Token", "tok-ops")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Console-Role", "admin")
+	code, body = doGW(t, srv, req)
+	if code != http.StatusOK {
+		t.Fatalf("correction reverse want 200 got %d body=%s", code, body)
+	}
+	if sawRole != domain.ConsoleRoleCorrection {
+		t.Fatalf("gateway must overwrite role, got %q", sawRole)
+	}
+
+	req, _ = http.NewRequest(http.MethodGet, srv.URL+"/api/v1/ledger/accounts", nil)
+	req.Header.Set("X-Console-Token", "tok-ro")
+	code, body = doGW(t, srv, req)
+	if code != http.StatusOK {
+		t.Fatalf("readonly GET want 200 got %d body=%s", code, body)
+	}
+}
+
 func TestGatewayTenantUnauthorized(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -237,4 +322,3 @@ func TestGatewayTenantUnauthorized(t *testing.T) {
 		t.Fatalf("foreign tenant want 403/40301 got %d body=%s", code, body)
 	}
 }
-

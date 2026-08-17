@@ -23,6 +23,8 @@ type AccountRepository interface {
 	UpdateBalances(ctx context.Context, a *Account) error
 	UpdateStatus(ctx context.Context, a *Account) error
 	ListByTenant(ctx context.Context, tenantID, assetCode string) ([]*Account, error)
+	CountByTenant(ctx context.Context, tenantID, assetCode string) (int64, error)
+	ListRecentByTenant(ctx context.Context, tenantID, assetCode string, limit int) ([]*Account, error)
 	ListByHolder(ctx context.Context, tenantID string, holder Holder, assetCode string) ([]*Account, error)
 }
 
@@ -72,7 +74,7 @@ type IdempotencyRepository interface {
 
 type AuditRepository interface {
 	Create(ctx context.Context, a *GatewayAudit) error
-	List(ctx context.Context, limit int) ([]*GatewayAudit, error)
+	List(ctx context.Context, q AuditQuery) ([]*GatewayAudit, error)
 }
 
 type AlertRepository interface {
@@ -82,7 +84,7 @@ type AlertRepository interface {
 
 type OpsAuditRepository interface {
 	Create(ctx context.Context, a *OpsAudit) error
-	List(ctx context.Context, tenantID string, limit int) ([]*OpsAudit, error)
+	List(ctx context.Context, q AuditQuery) ([]*OpsAudit, error)
 }
 
 type OpsRunRepository interface {

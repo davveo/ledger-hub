@@ -95,19 +95,23 @@ func (r *OpsAuditRepo) Create(ctx context.Context, a *domain.OpsAudit) error {
 	}).Error
 }
 
-func (r *OpsAuditRepo) List(ctx context.Context, tenantID string, limit int) ([]*domain.OpsAudit, error) {
-	if limit <= 0 {
-		limit = 50
+func (r *OpsAuditRepo) List(ctx context.Context, q domain.AuditQuery) ([]*domain.OpsAudit, error) {
+	q = q.Clamp(50, 500)
+	db := dbFrom(ctx, r.db).Order("id desc").Limit(q.Limit)
+	if q.From != nil {
+		db = db.Where("created_at >= ?", *q.From)
 	}
-	if limit > 200 {
-		limit = 200
+	if q.To != nil {
+		db = db.Where("created_at < ?", *q.To)
 	}
-	q := dbFrom(ctx, r.db).Order("id desc").Limit(limit)
-	if tenantID != "" {
-		q = q.Where("tenant_id = ? OR tenant_id = ''", tenantID)
+	if q.TenantID != "" {
+		db = db.Where("tenant_id = ? OR tenant_id = ''", q.TenantID)
+	}
+	if q.Operator != "" {
+		db = db.Where("operator = ?", q.Operator)
 	}
 	var rows []LedgerOpsAudit
-	if err := q.Find(&rows).Error; err != nil {
+	if err := db.Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	out := make([]*domain.OpsAudit, 0, len(rows))

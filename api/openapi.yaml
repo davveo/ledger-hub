@@ -620,21 +620,81 @@ paths:
   /ops/audits:
     get:
       tags: [ops]
-      summary: 网关审计
+      summary: 网关审计（可筛租户/操作人/时间，format=csv 导出）
+      parameters:
+        - in: query
+          name: tenant_id
+          schema: {type: string}
+        - in: query
+          name: operator
+          schema: {type: string}
+        - in: query
+          name: client_id
+          schema: {type: string}
+        - in: query
+          name: from
+          schema: {type: string, description: RFC3339 或 YYYY-MM-DD}
+        - in: query
+          name: to
+          schema: {type: string, description: RFC3339 或 YYYY-MM-DD（日期含当天）}
+        - in: query
+          name: limit
+          schema: {type: integer, default: 50, maximum: 500}
+        - in: query
+          name: format
+          schema: {type: string, enum: [csv]}
       responses:
-        "200": {description: audits}
+        "200": {description: audits 或 CSV}
   /ops/actions:
     get:
       tags: [ops]
-      summary: 运营操作审计
+      summary: 运营操作审计（可筛租户/操作人/时间，format=csv 导出）
+      parameters:
+        - in: query
+          name: tenant_id
+          schema: {type: string}
+        - in: query
+          name: operator
+          schema: {type: string}
+        - in: query
+          name: from
+          schema: {type: string}
+        - in: query
+          name: to
+          schema: {type: string}
+        - in: query
+          name: limit
+          schema: {type: integer, default: 50, maximum: 500}
+        - in: query
+          name: format
+          schema: {type: string, enum: [csv]}
       responses:
-        "200": {description: actions}
+        "200": {description: actions 或 CSV}
   /ops/alerts:
     get:
       tags: [ops]
       summary: 限额告警
       responses:
         "200": {description: alerts}
+  /console/me:
+    get:
+      tags: [ops]
+      summary: 当前运营角色与操作人
+      responses:
+        "200": {description: "{role, operator}"}
+  /console/overview:
+    get:
+      tags: [ops]
+      summary: 运营首页汇总（账户计数 + 最近 Top N）
+      parameters:
+        - in: query
+          name: asset_code
+          schema: {type: string}
+        - in: query
+          name: limit
+          schema: {type: integer, default: 8, maximum: 50}
+      responses:
+        "200": {description: overview}
   /openapi.yaml:
     get:
       summary: OpenAPI 文档

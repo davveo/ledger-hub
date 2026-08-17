@@ -1,6 +1,9 @@
 package httpserver
 
 import (
+	"encoding/csv"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -39,12 +42,32 @@ func (s *Server) listOpenDiffs(c *gin.Context) {
 
 func (s *Server) listGatewayAudits(c *gin.Context) {
 	if s.audit == nil {
+		if wantsCSV(c) {
+			writeCSV(c, "gateway-audits.csv", []string{"audit_id", "client_id", "tenant_id", "method", "path", "status", "remote_addr", "request_id", "operator", "created_at"}, nil)
+			return
+		}
 		ok(c, []interface{}{})
 		return
 	}
-	list, err := s.audit.List(c.Request.Context(), parsePage(c).Limit)
+	q, err := parseAuditQuery(c)
 	if err != nil {
 		fail(c, err)
+		return
+	}
+	list, err := s.audit.List(c.Request.Context(), q)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	if wantsCSV(c) {
+		rows := make([][]string, 0, len(list))
+		for _, a := range list {
+			rows = append(rows, []string{
+				a.AuditID, a.ClientID, a.TenantID, a.Method, a.Path,
+				strconv.Itoa(a.Status), a.RemoteAddr, a.RequestID, a.Operator, a.CreatedAt.UTC().Format(time.RFC3339),
+			})
+		}
+		writeCSV(c, "gateway-audits.csv", []string{"audit_id", "client_id", "tenant_id", "method", "path", "status", "remote_addr", "request_id", "operator", "created_at"}, rows)
 		return
 	}
 	ok(c, list)
@@ -52,12 +75,31 @@ func (s *Server) listGatewayAudits(c *gin.Context) {
 
 func (s *Server) listOpsActions(c *gin.Context) {
 	if s.jobs == nil {
+		if wantsCSV(c) {
+			writeCSV(c, "ops-actions.csv", []string{"audit_id", "operator", "action", "tenant_id", "target", "detail", "created_at"}, nil)
+			return
+		}
 		ok(c, []interface{}{})
 		return
 	}
-	list, err := s.jobs.ListActions(c.Request.Context(), s.tenantID(c, ""), parsePage(c).Limit)
+	q, err := parseAuditQuery(c)
 	if err != nil {
 		fail(c, err)
+		return
+	}
+	list, err := s.jobs.ListActions(c.Request.Context(), q)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	if wantsCSV(c) {
+		rows := make([][]string, 0, len(list))
+		for _, a := range list {
+			rows = append(rows, []string{
+				a.AuditID, a.Operator, a.Action, a.TenantID, a.Target, a.Detail, a.CreatedAt.UTC().Format(time.RFC3339),
+			})
+		}
+		writeCSV(c, "ops-actions.csv", []string{"audit_id", "operator", "action", "tenant_id", "target", "detail", "created_at"}, rows)
 		return
 	}
 	ok(c, list)
@@ -248,4 +290,70 @@ func (s *Server) listConfigRevisions(c *gin.Context) {
 		return
 	}
 	ok(c, list)
+}
+
+func wantsCSV(c *gin.Context) bool {
+	return strings.EqualFold(c.Query("format"), "csv")
+}
+
+func parseAuditQuery(c *gin.Context) (domain.AuditQuery, error) {
+	from, to, err := parseAuditTimeRange(c)
+	if err != nil {
+		return domain.AuditQuery{}, err
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	return domain.AuditQuery{
+		TenantID: c.Query("tenant_id"),
+		Operator: c.Query("operator"),
+		ClientID: c.Query("client_id"),
+		From:     from,
+		To:       to,
+		Limit:    limit,
+	}.Clamp(50, 500), nil
+}
+
+func parseAuditTimeRange(c *gin.Context) (*time.Time, *time.Time, error) {
+	from, err := parseAuditTime(c.Query("from"), false)
+	if err != nil {
+		return nil, nil, domain.Keyed(domain.CodeTimeFromInvalid, domain.KeyTimeFromInvalid)
+	}
+	to, err := parseAuditTime(c.Query("to"), true)
+	if err != nil {
+		return nil, nil, domain.Keyed(domain.CodeTimeToInvalid, domain.KeyTimeToInvalid)
+	}
+	if from != nil && to != nil && !from.Before(*to) {
+		return nil, nil, domain.Keyed(domain.CodeTimeOrderInvalid, domain.KeyTimeOrderInvalid)
+	}
+	return from, to, nil
+}
+
+func parseAuditTime(raw string, endOfDate bool) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return &t, nil
+	}
+	t, err := time.Parse("2006-01-02", raw)
+	if err != nil {
+		return nil, err
+	}
+	if endOfDate {
+		t = t.Add(24 * time.Hour)
+	}
+	return &t, nil
+}
+
+func writeCSV(c *gin.Context, filename string, header []string, rows [][]string) {
+	c.Header("Content-Type", "text/csv; charset=utf-8")
+	c.Header("Content-Disposition", `attachment; filename="`+filename+`"`)
+	c.Status(200)
+	_, _ = c.Writer.Write([]byte{0xEF, 0xBB, 0xBF})
+	w := csv.NewWriter(c.Writer)
+	_ = w.Write(header)
+	for _, row := range rows {
+		_ = w.Write(row)
+	}
+	w.Flush()
 }

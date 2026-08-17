@@ -280,6 +280,8 @@ GET  /api/v1/ledger/fx/rates/{rate_id}
 POST /api/v1/ledger/tenants
 GET  /api/v1/ledger/tenants
 GET  /console
+GET  /api/v1/ledger/console/me
+GET  /api/v1/ledger/console/overview
 ```
 
 `POST /reconcile/jobs` 立即 **202**（`job_id` / `status=queued` / `version`），由 Worker 领取执行。同一租户+日期+来源+资产默认复用已有 queued/running/done；`force_new_version` 或 rerun 升版本。任务可附带业务侧应记账清单（L1）；即使不传 `biz_lines`，也会跑 L2 余额勾稽、L3 冻结勾稽与 L4 兑换完整性。
@@ -401,7 +403,7 @@ wallet    → Credit / Debit / Freeze / Capture / Release / Transfer / Exchange 
 worker    → Release / Debit / Transfer / Reverse *
 ```
 
-运营台：浏览器打开 `http://127.0.0.1:8080/console`，或经网关 `http://127.0.0.1:8088/console`（需请求头 `X-Console-Token`，**禁止** query）。后台按模块管理资产、租户、账户启停、流水/冻结检索、冲正、汇率、异步对账与差异工单、作业（实例/耗时/错误/最后成功）、ACL/限额热加载（配置版本）。API 启动时会幂等写入演示账（`u_alice` / `u_bob` / `m_shop` 等），金额均为最小单位、余额与流水自洽。OpenAPI：`GET /api/v1/ledger/openapi.yaml`（1.2.0）。Gateway 写/读请求均需 HMAC，时间窗默认 300s。`OTEL_EXPORTER_OTLP_ENDPOINT` 非空才导出 OTLP，否则仍传播 `traceparent`。
+运营台：浏览器打开 `http://127.0.0.1:8080/console`，或经网关 `http://127.0.0.1:8088/console`（**打开页面不必带 Token**；调接口须 `X-Console-Token`，**禁止** query）。本地 Token：管理员 `dev-console-token`、只读 `dev-console-readonly`、记账纠错 `dev-console-ops`、作业 `dev-console-jobs`。后台按模块管理资产、租户、账户启停、流水/冻结检索、冲正、汇率、异步对账与差异工单、作业（实例/耗时/错误/最后成功）、ACL/限额热加载（配置版本）。API 启动时会幂等写入演示账（`u_alice` / `u_bob` / `m_shop` 等）以及三条未完成演示 Saga，金额均为最小单位、余额与流水自洽。OpenAPI：`GET /api/v1/ledger/openapi.yaml`（1.2.0）。Gateway 写/读请求均需 HMAC，时间窗默认 300s。`OTEL_EXPORTER_OTLP_ENDPOINT` 非空才导出 OTLP，否则仍传播 `traceparent`。
 
 分库：`mysql.shards` 配置额外 DSN；账户 / 流水 / 冻结 / 幂等按 `holder_id` 哈希路由。未配置时仍为单库。同 holder 的 Exchange 落在同一分片；跨 holder Transfer 若分片不同则经 `pending_settlement` 两段记账。
 

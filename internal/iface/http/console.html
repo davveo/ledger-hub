@@ -53,7 +53,10 @@
     .b-active, .b-done, .b-resolved, .b-captured { background: rgba(52,211,153,.15); color: var(--emerald); }
     .b-disabled, .b-failed, .b-open, .b-missing { background: rgba(251,113,133,.15); color: var(--rose); }
     .b-frozen, .b-running { background: rgba(251,191,36,.15); color: var(--amber); }
-    .b-released { background: rgba(148,163,184,.15); color: var(--muted); }
+    .badge.b-admin { background: rgba(167,139,250,.18); color: var(--violet); }
+    .badge.b-readonly { background: rgba(148,163,184,.18); color: var(--muted); }
+    .badge.b-correction { background: rgba(251,191,36,.18); color: var(--amber); }
+    .badge.b-jobs { background: rgba(34,211,238,.18); color: var(--cyan); }
     .toast { position: fixed; right: 18px; bottom: 18px; background: #1e293b; border: 1px solid #334155; padding: 10px 14px; border-radius: 10px; max-width: 420px; display: none; font-size: 13px; z-index: 30; box-shadow: 0 16px 40px rgba(0,0,0,.35); }
     .toast.show { display: block; }
     .toast.err { border-color: var(--rose); }
@@ -87,7 +90,7 @@
       <span class="dot"></span>
       <div><h1>Ledger Hub 后台</h1><p>运营控制台</p></div>
     </div>
-    <p class="muted">经网关访问时填写 <code>gateway.console_token</code>（本地默认 <code>dev-console-token</code>）。直连 API :8080 可不填。操作人会写入冲正 / 关差异 / 作业审计。</p>
+    <p class="muted">经网关打开本页不再需要 Token；调接口才要。本地演示 Token：管理员 <code>dev-console-token</code>，只读 <code>dev-console-readonly</code>，记账纠错 <code>dev-console-ops</code>，作业 <code>dev-console-jobs</code>。直连 API :8080 可不填。操作人会写入冲正 / 关差异 / 作业审计。</p>
     <div class="row" style="margin-top:12px">
       <input id="loginToken" placeholder="X-Console-Token" style="flex:1;min-width:0"/>
     </div>
@@ -120,6 +123,7 @@
   <section class="main">
     <header class="top">
       <h2 id="title">首页</h2>
+      <span id="roleBadge" class="badge b-admin">admin</span>
       <select id="tenantSel" onchange="onTenant()"></select>
       <input id="operator" placeholder="操作人" style="min-width:120px"/>
       <input id="token" placeholder="Console Token" style="min-width:180px"/>
@@ -154,10 +158,20 @@ const TENANT_KEY = 'ledger_console_tenant';
 const OP_KEY = 'ledger_console_operator';
 const titles = {dashboard:'首页', assets:'资产', tenants:'租户', accounts:'账户', entries:'流水', freezes:'冻结单', fx:'汇率', reconcile:'对账', jobs:'作业', audit:'审计', risk:'风控'};
 let overview = {};
+let consoleRole = 'admin';
 let entryOffset = 0;
 const entryLimit = 50;
 
 function $(id) { return document.getElementById(id); }
+function can(role) {
+  const r = consoleRole || 'admin';
+  if (!role || r === 'admin') return true;
+  return r === role;
+}
+function ro(role) { return can(role) ? '' : 'disabled'; }
+function roleLabel(role) {
+  return ({admin:'管理员', readonly:'只读', correction:'记账纠错', jobs:'作业'})[role] || role || '管理员';
+}
 function page() { return (location.hash.replace(/^#\/?/, '') || 'dashboard').split('?')[0]; }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function v(row, ...keys) {
@@ -300,7 +314,7 @@ function saveSession() {
   localStorage.setItem(TOKEN_KEY, $('token').value.trim());
   localStorage.setItem(OP_KEY, ($('operator') && $('operator').value.trim()) || 'console');
   toast('已保存 Token / 操作人');
-  loadOverview().then(render);
+  Promise.all([loadOverview(), loadMe()]).then(render);
 }
 function saveToken() { saveSession(); }
 function onTenant() {
@@ -313,6 +327,22 @@ async function loadOverview() {
   overview = j.data || {};
   fillTenants(overview.tenants || []);
   return overview;
+}
+async function loadMe() {
+  try {
+    const j = await api('/api/v1/ledger/console/me');
+    consoleRole = (j.data && j.data.role) || 'admin';
+    if (j.data && j.data.operator && $('operator') && !$('operator').value) {
+      $('operator').value = j.data.operator;
+    }
+  } catch (_) {
+    consoleRole = 'admin';
+  }
+  const badge = $('roleBadge');
+  if (badge) {
+    badge.textContent = roleLabel(consoleRole);
+    badge.className = 'badge b-' + esc(consoleRole || 'admin');
+  }
 }
 function fillTenants(list) {
   const sel = $('tenantSel');
@@ -350,10 +380,17 @@ function viewDash() {
     <div class="stats">
       <div class="stat"><div class="k">租户</div><div class="v">${(d.tenants||[]).length}</div></div>
       <div class="stat"><div class="k">资产</div><div class="v">${(d.assets||[]).length}</div></div>
-      <div class="stat"><div class="k">账户</div><div class="v">${(d.accounts||[]).length}</div></div>
+      <div class="stat"><div class="k">账户</div><div class="v">${d.account_count != null ? d.account_count : (d.accounts||[]).length}</div></div>
       <div class="stat"><div class="k">汇率快照</div><div class="v">${(d.fx_rates||[]).length}</div></div>
       <div class="stat"><div class="k">限额告警</div><div class="v">${alerts.length}</div></div>
     </div>
+    <div class="card"><h3>最近账户</h3>${table(
+      [{label:'持有人', key:'holder_id', mono:true}, {label:'资产', key:'asset_code'},
+       {label:'可用', html:true, mono:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'available')))},
+       {label:'冻结', html:true, mono:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'frozen')))},
+       {label:'状态', html:true, value: r => badge(v(r,'status'))}],
+      d.accounts || []
+    )}</div>
     <div class="card"><h3>最近限额告警</h3>${table(
       [{label:'时间', key:'at'}, {label:'持有人', key:'holder_id', mono:true}, {label:'资产', key:'asset_code'}, {label:'命令', key:'command'}, {label:'原因', key:'reason'}],
       alerts.slice(0, 8)
@@ -374,9 +411,9 @@ function viewAssets() {
         <input id="assetClass" placeholder="asset_class 如 point / fiat"/>
         <input id="assetHolders" placeholder="holder_types 逗号分隔" value="user,merchant"/>
         <label class="muted"><input type="checkbox" id="assetFreeze" checked/> 支持冻结</label>
-        <button onclick="saveAsset()">登记</button>
-        <button class="warn" onclick="assetStatus('disable')">下线</button>
-        <button class="ok" onclick="assetStatus('enable')">启用</button>
+        <button ${ro('admin')} onclick="saveAsset()">登记</button>
+        <button class="warn" ${ro('admin')} onclick="assetStatus('disable')">下线</button>
+        <button class="ok" ${ro('admin')} onclick="assetStatus('enable')">启用</button>
       </div>
     </div>
     <div class="card"><h3>资产列表</h3>${table(
@@ -396,9 +433,9 @@ function viewTenants() {
       <div class="row">
         <input id="tenantId" placeholder="tenant_id"/>
         <input id="tenantName" placeholder="名称"/>
-        <button onclick="saveTenant()">保存</button>
-        <button class="warn" onclick="tenantStatus('disable')">停用</button>
-        <button class="ok" onclick="tenantStatus('enable')">启用</button>
+        <button ${ro('admin')} onclick="saveTenant()">保存</button>
+        <button class="warn" ${ro('admin')} onclick="tenantStatus('disable')">停用</button>
+        <button class="ok" ${ro('admin')} onclick="tenantStatus('enable')">启用</button>
       </div>
     </div>
     <div class="card"><h3>租户列表</h3>${table(
@@ -417,7 +454,7 @@ function viewAccounts() {
         <select id="holderType"><option>user</option><option>merchant</option><option>system_subject</option></select>
         <input id="qAsset" placeholder="asset_code 可空"/>
         <button onclick="searchAccounts()">查询</button>
-        <button class="ghost" onclick="openAccount()">开户</button>
+        <button class="ghost" ${ro('admin')} onclick="openAccount()">开户</button>
       </div>
       <p class="muted">不填 holder 时列出当前租户账户。行内可停用 / 启用，禁止再记账。</p>
     </div>
@@ -443,7 +480,7 @@ function viewEntries() {
         <input id="revBiz" placeholder="原 biz_no"/>
         <input id="revSrc" placeholder="source_system" value="wallet"/>
         <input id="revNew" placeholder="新 biz_no 可空自动生成"/>
-        <button class="warn" onclick="doReverse()">冲正</button>
+        <button class="warn" ${ro('correction')} onclick="doReverse()">冲正</button>
       </div>
     </div>
     <div class="card"><h3>流水</h3><div id="entryTable"></div>
@@ -479,13 +516,13 @@ function viewJobs() {
     <div class="card">
       <h3>手动触发 Worker 作业</h3>
       <div class="row">
-        <button onclick="runJob('release_expired')">释放过期冻结</button>
-        <button onclick="runJob('reconcile')">日终对账</button>
-        <button onclick="runJob('expire')">资产过期入账</button>
-        <button onclick="runJob('fx_feed')">汇率 Feed</button>
-        <button class="ghost" onclick="runJob('idempotency')">清理幂等</button>
-        <button class="ghost" onclick="runJob('saga')">续跑 Saga</button>
-        <button class="ghost" onclick="runJob('queued-reconcile')">领取排队对账</button>
+        <button ${ro('jobs')} onclick="runJob('release_expired')">释放过期冻结</button>
+        <button ${ro('jobs')} onclick="runJob('reconcile')">日终对账</button>
+        <button ${ro('jobs')} onclick="runJob('expire')">资产过期入账</button>
+        <button ${ro('jobs')} onclick="runJob('fx_feed')">汇率 Feed</button>
+        <button class="ghost" ${ro('jobs')} onclick="runJob('idempotency')">清理幂等</button>
+        <button class="ghost" ${ro('jobs')} onclick="runJob('saga')">续跑 Saga</button>
+        <button class="ghost" ${ro('jobs')} onclick="runJob('queued-reconcile')">领取排队对账</button>
       </div>
       <p class="muted">结果写入作业记录。过期入账仅在策略命中时过账；试算不记账。</p>
     </div>
@@ -499,7 +536,7 @@ function viewJobs() {
     </div>
     <div class="card">
       <h3>跨分片 Saga</h3>
-      <p class="muted">Worker 每 15s 扫描未完成 Saga。可按状态筛选，对单笔人工重试或补偿。</p>
+      <p class="muted">Worker 每 15s 扫描未完成 Saga（会跳过演示标记）。单库演示会写入 pending / out_done / compensating 三条。可按状态筛选，对单笔人工重试或补偿。</p>
       <div class="row">
         <select id="sagaStatus">
           <option value="">未完成</option>
@@ -518,7 +555,22 @@ function viewJobs() {
 }
 
 function viewAudit() {
+  const today = new Date().toISOString().slice(0, 10);
   return `
+    <div class="card">
+      <h3>筛选</h3>
+      <div class="row">
+        <input id="auditTenant" placeholder="tenant_id" value="${esc(localStorage.getItem(TENANT_KEY) || '')}"/>
+        <input id="auditOp" placeholder="操作人"/>
+        <input id="auditClient" placeholder="client_id"/>
+        <input id="auditFrom" placeholder="from YYYY-MM-DD" type="date"/>
+        <input id="auditTo" placeholder="to YYYY-MM-DD" type="date" value="${today}"/>
+        <button class="ghost" onclick="loadAudit()">查询</button>
+        <button class="ghost" onclick="exportAudit('audits')">导出网关 CSV</button>
+        <button class="ghost" onclick="exportAudit('actions')">导出操作 CSV</button>
+      </div>
+      <p class="muted">按租户 / 操作人 / client / 时间筛选。日期 to 含当天。导出不走 JSON 信封。</p>
+    </div>
     <div class="card"><h3>网关审计</h3><div id="gwAuditTable"><p class="muted">加载中…</p></div></div>
     <div class="card"><h3>运营操作</h3><p class="muted">冲正、Capture/Release、关差异、手动作业会记操作人。</p>
       <div id="opsActionTable"></div></div>
@@ -534,7 +586,7 @@ function viewFx() {
         <input id="quote" placeholder="quote 如 BALANCE_USD"/>
         <input id="rate" placeholder="rate 如 0.14000000"/>
         <input id="rateSrc" placeholder="rate_source" value="manual"/>
-        <button onclick="saveRate()">保存</button>
+        <button ${ro('admin')} onclick="saveRate()">保存</button>
       </div>
       <p class="muted">账本只存快照，不负责行情对错。兑换必须引用有效 rate_id。</p>
     </div>
@@ -554,7 +606,7 @@ function viewRecon() {
         <input id="reconDate" placeholder="YYYY-MM-DD" value="${today}"/>
         <input id="reconSys" placeholder="source_system 可空"/>
         <input id="reconAsset" placeholder="asset_code 可空"/>
-        <button onclick="runRecon()">跑对账</button>
+        <button ${ro('jobs')} onclick="runRecon()">跑对账</button>
         <button class="ghost" onclick="loadReport()">按日期查看</button>
       </div>
       <p class="muted">不传业务清单也会跑 L2 余额勾稽、L3 冻结、L4 兑换完整性。</p>
@@ -565,8 +617,8 @@ function viewRecon() {
         <input id="diffId" placeholder="diff_id"/>
         <input id="diffNote" placeholder="关闭说明"/>
         <input id="diffAssignee" placeholder="指派给"/>
-        <button onclick="resolveDiff()">关闭差异</button>
-        <button class="ghost" onclick="assignDiff()">指派</button>
+        <button ${ro('correction')} onclick="resolveDiff()">关闭差异</button>
+        <button class="ghost" ${ro('correction')} onclick="assignDiff()">指派</button>
         <button class="ghost" onclick="loadOpenDiffs()">刷新待关闭</button>
       </div>
       <div id="openDiffTable"><p class="muted">加载中…</p></div>
@@ -581,7 +633,7 @@ function viewRisk() {
     <div class="card">
       <h3>配置热加载</h3>
       <div class="row">
-        <button onclick="reloadCfg()">重载 ACL / 限额</button>
+        <button ${ro('jobs')} onclick="reloadCfg()">重载 ACL / 限额</button>
         <span class="muted">改 yaml 后点这里，或等 API 15s 扫描 mtime。</span>
       </div>
       <p class="muted" id="cfgRevLine">配置版本：加载中…</p>
@@ -653,7 +705,8 @@ async function searchAccounts() {
       const id = v(r,'account_id');
       const st = String(v(r,'status'));
       const op = st === 'disabled' ? 'enable' : 'disable';
-      return `<button class="ghost" onclick="setAcc('${esc(id)}','${op}')">${op === 'disable' ? '停用' : '启用'}</button>
+      const accBtn = can('admin') ? `<button class="ghost" onclick="setAcc('${esc(id)}','${op}')">${op === 'disable' ? '停用' : '启用'}</button>` : '';
+      return `${accBtn}
         <button class="ghost" onclick="gotoEntries('${esc(v(r,'holder_id'))}','${esc(v(r,'holder_type'))}','${esc(v(r,'asset_code'))}')">流水</button>`;
     }
   );
@@ -739,7 +792,7 @@ async function searchFreezes() {
 
 function freezeActions(r, expired) {
   const st = String(v(r,'status'));
-  if (st !== 'frozen') return '';
+  if (st !== 'frozen' || !can('correction')) return '';
   const id = esc(v(r,'freeze_id'));
   const asset = esc(v(r,'asset_code'));
   const amt = esc(v(r,'amount'));
@@ -821,7 +874,7 @@ async function refreshRecon() {
        {label:'版本', key:'version'}, {label:'状态', html:true, value: r => badge(v(r,'status'))}, {label:'时间', key:'created_at'}],
       list,
       r => `<button class="ghost" onclick="openJob('${esc(v(r,'job_id'))}')">查看</button>
-        <button class="ghost" onclick="rerunJob('${esc(v(r,'job_id'))}')">重跑</button>`
+        ${can('jobs') ? `<button class="ghost" onclick="rerunJob('${esc(v(r,'job_id'))}')">重跑</button>` : ''}`
     );
   } catch (e) { $('jobTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
   try {
@@ -960,7 +1013,7 @@ async function loadSagas() {
       r => {
         const id = esc(v(r,'saga_id'));
         const done = String(v(r,'status')) === 'completed';
-        if (done) return '';
+        if (done || !can('jobs')) return '';
         return `<button class="ghost" onclick="retrySaga('${id}')">重试</button>
           <button class="warn" onclick="compensateSaga('${id}')">补偿</button>`;
       }
@@ -1020,19 +1073,20 @@ async function loadExpirePreview() {
 }
 
 async function loadAudit() {
+  const q = auditQuery();
   try {
-    const j = await api('/api/v1/ledger/ops/audits?limit=50');
+    const j = await api('/api/v1/ledger/ops/audits?' + q);
     if ($('gwAuditTable')) $('gwAuditTable').innerHTML = table(
-      [{label:'时间', key:'created_at'}, {label:'Client', key:'client_id'}, {label:'租户', key:'tenant_id'}, {label:'方法', key:'method'},
-       {label:'路径', key:'path', mono:true}, {label:'状态', key:'status'}, {label:'来源', key:'remote_addr'}],
+      [{label:'时间', key:'created_at'}, {label:'Client', key:'client_id'}, {label:'租户', key:'tenant_id'}, {label:'操作人', key:'operator'},
+       {label:'方法', key:'method'}, {label:'路径', key:'path', mono:true}, {label:'状态', key:'status'}, {label:'来源', key:'remote_addr'}],
       j.data || []
     );
   } catch (e) { if ($('gwAuditTable')) $('gwAuditTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
   try {
-    const j = await api('/api/v1/ledger/ops/actions?limit=50');
+    const j = await api('/api/v1/ledger/ops/actions?' + q);
     if ($('opsActionTable')) $('opsActionTable').innerHTML = table(
       [{label:'时间', key:'created_at'}, {label:'操作人', key:'operator'}, {label:'动作', key:'action'},
-       {label:'目标', key:'target', mono:true}, {label:'详情', key:'detail'}],
+       {label:'租户', key:'tenant_id'}, {label:'目标', key:'target', mono:true}, {label:'详情', key:'detail'}],
       j.data || []
     );
   } catch (e) { if ($('opsActionTable')) $('opsActionTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
@@ -1045,6 +1099,34 @@ async function loadAudit() {
     );
   } catch (e) { if ($('alertTable')) $('alertTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
 }
+function auditQuery() {
+  const q = new URLSearchParams();
+  q.set('limit', '50');
+  const tenant = $('auditTenant') && $('auditTenant').value.trim();
+  const op = $('auditOp') && $('auditOp').value.trim();
+  const client = $('auditClient') && $('auditClient').value.trim();
+  const from = $('auditFrom') && $('auditFrom').value.trim();
+  const to = $('auditTo') && $('auditTo').value.trim();
+  if (tenant) q.set('tenant_id', tenant);
+  if (op) q.set('operator', op);
+  if (client) q.set('client_id', client);
+  if (from) q.set('from', from);
+  if (to) q.set('to', to);
+  return q.toString();
+}
+async function exportAudit(kind) {
+  const path = kind === 'actions' ? '/api/v1/ledger/ops/actions' : '/api/v1/ledger/ops/audits';
+  const r = await api(path + '?' + auditQuery() + '&format=csv');
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = kind === 'actions' ? 'ops-actions.csv' : 'gateway-audits.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 window.addEventListener('hashchange', () => { try { render(); } catch (e) { toast(e.message, true); } });
 window.addEventListener('unhandledrejection', ev => toast(String(ev.reason && ev.reason.message || ev.reason), true));
@@ -1054,6 +1136,7 @@ async function boot() {
   if ($('operator')) $('operator').value = localStorage.getItem(OP_KEY) || 'console';
   try {
     await loadOverview();
+    await loadMe();
     $('login').classList.add('hidden');
     $('app').classList.remove('hidden');
     if (!location.hash || !titles[page()]) location.hash = '#/dashboard';

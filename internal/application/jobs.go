@@ -102,11 +102,11 @@ func (j *Jobs) LastSuccess(ctx context.Context) (map[string]time.Time, error) {
 	return j.runs.LastSuccess(ctx)
 }
 
-func (j *Jobs) ListActions(ctx context.Context, tenantID string, limit int) ([]*domain.OpsAudit, error) {
+func (j *Jobs) ListActions(ctx context.Context, q domain.AuditQuery) ([]*domain.OpsAudit, error) {
 	if j == nil || j.audit == nil {
 		return []*domain.OpsAudit{}, nil
 	}
-	return j.audit.List(ctx, tenantID, limit)
+	return j.audit.List(ctx, q)
 }
 
 func (j *Jobs) tenantIDs(ctx context.Context) []string {

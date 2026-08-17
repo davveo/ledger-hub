@@ -30,7 +30,7 @@ API 前缀：
 | `Lang` / `X-Lang` / `Accept-Language` | 错误 `message` 语言。`en` / `en-US` 英文，其余默认中文。`code` 与 `error` 不随语言变化 |
 | `Content-Type` | 写请求使用 `application/json` |
 
-运营控制台只用 `X-Console-Token`，**禁止** `?console_token=`。
+运营控制台只用 `X-Console-Token`，**禁止** `?console_token=`。GET `/console` HTML 经网关可无 Token。角色见 `X-Console-Role`（网关注入）：readonly / correction / jobs / admin。
 
 **V2**（推荐，`pkg/client` 默认）：
 
@@ -342,9 +342,11 @@ POST /api/v1/ledger/ops/sagas/{id}/retry
 POST /api/v1/ledger/ops/sagas/{id}/compensate
 POST /api/v1/ledger/ops/reload
 GET  /api/v1/ledger/ops/config/revisions?limit=
-GET  /api/v1/ledger/ops/audits?limit=
-GET  /api/v1/ledger/ops/actions?limit=
+GET  /api/v1/ledger/ops/audits?tenant_id=&operator=&client_id=&from=&to=&limit=&format=
+GET  /api/v1/ledger/ops/actions?tenant_id=&operator=&from=&to=&limit=&format=
 GET  /api/v1/ledger/ops/alerts?limit=
+GET  /api/v1/ledger/console/me
+GET  /api/v1/ledger/console/overview
 GET  /api/v1/ledger/openapi.yaml
 ```
 
@@ -462,6 +464,7 @@ Connector 用于 Adapter Contract。事件带 `schema_version`（默认 1）。H
 | 40311 | TENANT_HEADER_MISMATCH | 403 | Header 与 body 租户不一致 |
 | 40312 | TENANT_NOT_ALLOWED | 403 | client 无权访问该租户 |
 | 40313 | TENANT_DISABLED | 403 | 租户已停用 |
+| 40314 | CONSOLE_ROLE_DENIED | 403 | 运营角色无权 |
 | 40401 | NOT_FOUND | 404 | 不存在；跨租户同样 404 |
 | 40901 | IDEMPOTENCY_CONFLICT | 409 | 幂等键相同参数不同 |
 | 42201 | INSUFFICIENT_BALANCE | 422 | 余额不足 |

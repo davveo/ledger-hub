@@ -81,6 +81,7 @@ type Account struct {
 	Frozen     int64         `json:"frozen"`
 	Version    int64         `json:"version"`
 	Status     AccountStatus `json:"status"`
+	UpdatedAt  time.Time     `json:"updated_at,omitempty"`
 }
 
 func (a *Account) Total() int64 {
@@ -301,11 +302,11 @@ const (
 	JournalReverse  = "reverse"
 	JournalPosting  = "posting"
 
-	SystemFxFee              = "fx_fee_income"
-	SystemFxClearing         = "fx_clearing"
-	SystemPointSink          = "point_sink"
-	SystemPointIssuance      = "point_issuance"
-	SystemPendingSettlement  = "pending_settlement"
+	SystemFxFee             = "fx_fee_income"
+	SystemFxClearing        = "fx_clearing"
+	SystemPointSink         = "point_sink"
+	SystemPointIssuance     = "point_issuance"
+	SystemPendingSettlement = "pending_settlement"
 )
 
 type ACLRule struct {
@@ -324,6 +325,7 @@ type GatewayAudit struct {
 	Status     int       `json:"status"`
 	RemoteAddr string    `json:"remote_addr,omitempty"`
 	RequestID  string    `json:"request_id,omitempty"`
+	Operator   string    `json:"operator,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 
@@ -359,20 +361,20 @@ type TransferSaga struct {
 }
 
 const (
-	DiffExtra          = "extra"
-	DiffMissing        = "missing"
-	DiffAmountMismatch = "amount_mismatch"
-	DiffAssetMismatch  = "asset_mismatch"
-	DiffBalanceTieOut  = "balance_tie_out"
-	DiffFreezeTieOut   = "freeze_tie_out"
-	DiffFxIncomplete   = "fx_incomplete"
-	DiffChannelMismatch   = "channel_mismatch"
+	DiffExtra              = "extra"
+	DiffMissing            = "missing"
+	DiffAmountMismatch     = "amount_mismatch"
+	DiffAssetMismatch      = "asset_mismatch"
+	DiffBalanceTieOut      = "balance_tie_out"
+	DiffFreezeTieOut       = "freeze_tie_out"
+	DiffFxIncomplete       = "fx_incomplete"
+	DiffChannelMismatch    = "channel_mismatch"
 	DiffCrossShardInFlight = "cross_shard_inflight"
 
-	ReconJobQueued   = "queued"
-	ReconJobRunning  = "running"
-	ReconJobDone     = "done"
-	ReconJobFailed   = "failed"
+	ReconJobQueued     = "queued"
+	ReconJobRunning    = "running"
+	ReconJobDone       = "done"
+	ReconJobFailed     = "failed"
 	DiffStatusOpen     = "open"
 	DiffStatusResolved = "resolved"
 	ReconJobTypeDaily  = "daily"
