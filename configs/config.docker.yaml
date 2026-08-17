@@ -2,6 +2,7 @@ app:
   name: ledger-hub
   env: docker
   default_tenant: t_default
+  reconcile_dir: /tmp/ledger-reconcile
 
 http:
   api_addr: ":8080"
@@ -72,3 +73,7 @@ limits:
       max_amount: 100000000
       daily_amount: 1000000000
       daily_count: 1000
+    - source_system: wallet
+      asset_code: POINT
+      command: Debit
+      max_amount: 80

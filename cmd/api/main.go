@@ -79,10 +79,13 @@ func main() {
 	tenantSvc := application.NewTenantService(repos.Tenant)
 	_ = tenantSvc.Save(context.Background(), &domain.Tenant{
 		TenantID: cfg.App.DefaultTenant,
-		Name:     "default",
+		Name:     "默认租户",
 		Status:   "active",
 	})
 	_ = application.SeedAssets(context.Background(), assetSvc, cfg.App.DefaultTenant)
+	if err := application.SeedDemo(context.Background(), books, assetSvc, accountSvc, tenantSvc, fxSvc, recon, cfg.App.DefaultTenant); err != nil {
+		zapLog.Warn("seed demo data", zap.Error(err))
+	}
 
 	reload := func() error {
 		fresh, err := config.Load(*cfgPath)

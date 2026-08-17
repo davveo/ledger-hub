@@ -387,7 +387,7 @@ wallet    → Credit / Debit / Freeze / Capture / Release / Transfer / Exchange 
 worker    → Release / Debit / Transfer / Reverse *
 ```
 
-运营台：浏览器打开 `http://127.0.0.1:8080/console`，或经网关 `http://127.0.0.1:8088/console`（需 `X-Console-Token`，默认 `dev-console-token`）。后台按模块管理资产、租户、账户启停、流水/冻结检索、冲正、汇率、日终对账与差异工单、ACL/限额热加载。OpenAPI：`GET /api/v1/ledger/openapi.yaml`。Gateway 写/读请求均需 HMAC，时间窗默认 300s。
+运营台：浏览器打开 `http://127.0.0.1:8080/console`，或经网关 `http://127.0.0.1:8088/console`（需 `X-Console-Token`，默认 `dev-console-token`）。后台按模块管理资产、租户、账户启停、流水/冻结检索、冲正、汇率、日终对账与差异工单、ACL/限额热加载。API 启动时会幂等写入演示账（`u_alice` / `u_bob` / `m_shop` 等），金额均为最小单位、余额与流水自洽。OpenAPI：`GET /api/v1/ledger/openapi.yaml`。Gateway 写/读请求均需 HMAC，时间窗默认 300s。
 
 分库：`mysql.shards` 配置额外 DSN；账户 / 流水 / 冻结 / 幂等按 `holder_id` 哈希路由。未配置时仍为单库。同 holder 的 Exchange 落在同一分片；跨 holder Transfer 若分片不同则经 `pending_settlement` 两段记账。
 

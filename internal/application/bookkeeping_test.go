@@ -362,8 +362,9 @@ func setupBooks(t *testing.T) (*Bookkeeping, *mem) {
 	})
 	acl := NewACL([]domain.ACLRule{
 		{SourceSystem: "campaign", Commands: []string{"Credit"}, Assets: []string{"POINT"}},
-		{SourceSystem: "order", Commands: []string{"Freeze", "Capture", "Release"}, Assets: []string{"POINT"}},
-		{SourceSystem: "wallet", Commands: []string{"Transfer", "Credit", "Debit", "Exchange", "Reverse"}, Assets: []string{"POINT", "BALANCE_CNY", "BALANCE_USD"}},
+		{SourceSystem: "order", Commands: []string{"Freeze", "Capture", "Release"}, Assets: []string{"POINT", "BALANCE_CNY"}},
+		{SourceSystem: "pay", Commands: []string{"Credit"}, Assets: []string{"BALANCE_CNY"}},
+		{SourceSystem: "wallet", Commands: []string{"Transfer", "Credit", "Debit", "Freeze", "Capture", "Release", "Exchange", "Reverse"}, Assets: []string{"POINT", "BALANCE_CNY", "BALANCE_USD"}},
 		{SourceSystem: "worker", Commands: []string{"Release", "Debit", "Transfer", "Reverse"}, Assets: []string{"*"}},
 	})
 	b := NewBookkeeping(memTx{}, st, memAccount{st}, memEntry{st}, memFreeze{st}, memIdem{st}, acl)
