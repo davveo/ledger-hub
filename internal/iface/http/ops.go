@@ -73,7 +73,7 @@ func (s *Server) listLimitAlerts(c *gin.Context) {
 
 func (s *Server) listOpsJobs(c *gin.Context) {
 	if s.jobs == nil {
-		ok(c, []interface{}{})
+		ok(c, gin.H{"items": []interface{}{}, "last_success": map[string]interface{}{}})
 		return
 	}
 	list, err := s.jobs.ListRuns(c.Request.Context(), parsePage(c).Limit)
@@ -81,7 +81,12 @@ func (s *Server) listOpsJobs(c *gin.Context) {
 		fail(c, err)
 		return
 	}
-	ok(c, list)
+	last, err := s.jobs.LastSuccess(c.Request.Context())
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, gin.H{"items": list, "last_success": last})
 }
 
 func (s *Server) expirePreview(c *gin.Context) {
@@ -130,6 +135,8 @@ func (s *Server) runOpsJob(c *gin.Context) {
 		run = s.jobs.PurgeIdempotency(c.Request.Context())
 	case "saga":
 		run = s.jobs.ResumeSagas(c.Request.Context())
+	case "queued-reconcile":
+		run = s.jobs.DrainReconcile(c.Request.Context())
 	default:
 		fail(c, domain.NewError(domain.CodeInvalidParam, "未知作业"))
 		return
@@ -181,4 +188,64 @@ func (s *Server) compensateSaga(c *gin.Context) {
 		s.jobs.Record(c.Request.Context(), s.operator(c), "saga_compensate", s.tenantID(c, ""), c.Param("id"), sg.Status)
 	}
 	ok(c, sg)
+}
+
+func (s *Server) assignDiff(c *gin.Context) {
+	if s.recon == nil {
+		fail(c, domain.ErrNotImplemented)
+		return
+	}
+	var body struct {
+		Assignee string `json:"assignee"`
+		Note     string `json:"note"`
+	}
+	_ = c.ShouldBindJSON(&body)
+	d, err := s.recon.AssignDiff(c.Request.Context(), s.tenantID(c, ""), c.Param("id"), body.Assignee, body.Note, s.operator(c))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	if s.jobs != nil {
+		s.jobs.Record(c.Request.Context(), s.operator(c), "assign_diff", s.tenantID(c, ""), c.Param("id"), body.Assignee)
+	}
+	ok(c, d)
+}
+
+func (s *Server) listDiffEvents(c *gin.Context) {
+	if s.recon == nil {
+		fail(c, domain.ErrNotImplemented)
+		return
+	}
+	list, err := s.recon.ListDiffEvents(c.Request.Context(), s.tenantID(c, ""), c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, list)
+}
+
+func (s *Server) rerunReconcile(c *gin.Context) {
+	if s.recon == nil {
+		fail(c, domain.ErrNotImplemented)
+		return
+	}
+	job, err := s.recon.Rerun(c.Request.Context(), s.tenantID(c, ""), c.Param("id"))
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(202, envelope{Code: 0, Data: gin.H{"job_id": job.JobID, "status": job.Status, "version": job.Version}})
+}
+
+func (s *Server) listConfigRevisions(c *gin.Context) {
+	if s.revs == nil {
+		ok(c, []interface{}{})
+		return
+	}
+	list, err := s.revs.List(c.Request.Context(), parsePage(c).Limit)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	ok(c, list)
 }

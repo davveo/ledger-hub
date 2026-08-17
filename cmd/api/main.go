@@ -16,6 +16,7 @@ import (
 	httpserver "github.com/davveo/ledger-hub/internal/iface/http"
 	"github.com/davveo/ledger-hub/internal/infrastructure/logger"
 	"github.com/davveo/ledger-hub/internal/infrastructure/persistence"
+	"github.com/davveo/ledger-hub/internal/observability"
 )
 
 func watchConfig(path string, reload func() error, log *zap.Logger) {
@@ -47,6 +48,9 @@ func main() {
 	flag.Parse()
 
 	cfg := config.MustLoad(*cfgPath)
+	if err := cfg.ValidateForEnv(); err != nil {
+		log.Fatal(err)
+	}
 	zapLog, err := logger.New(cfg.Log)
 	if err != nil {
 		log.Fatal(err)
@@ -57,9 +61,16 @@ func main() {
 	if err != nil {
 		zapLog.Fatal("open mysql", zap.Error(err))
 	}
-	if err := cluster.AutoMigrate(); err != nil {
-		zapLog.Fatal("auto migrate", zap.Error(err))
+	if cfg.MySQL.AutoMigrate {
+		if err := cluster.AutoMigrate(); err != nil {
+			zapLog.Fatal("auto migrate", zap.Error(err))
+		}
+	} else {
+		zapLog.Info("mysql.auto_migrate=false, expect ledger-migrate to have run")
 	}
+
+	stop := observability.InitTrace(context.Background(), "ledger-api")
+	defer stop()
 
 	repos := persistence.NewClusterRepos(cluster)
 	tx := persistence.NewClusterTxManager(cluster)
@@ -88,7 +99,9 @@ func main() {
 		WithTenants(repos.Tenant).
 		WithIdempotency(repos.Idempotency, cfg.Worker.IdempotencyRetain).
 		WithRuns(repos.OpsRun).
-		WithAudit(repos.OpsAudit)
+		WithAudit(repos.OpsAudit).
+		WithInstance(application.NewInstanceID()).
+		WithRetry(3, time.Second)
 	_ = tenantSvc.Save(context.Background(), &domain.Tenant{
 		TenantID: cfg.App.DefaultTenant,
 		Name:     "默认租户",
@@ -106,6 +119,7 @@ func main() {
 		}
 		acl.Replace(bootstrap.ACL(fresh.ACL).Rules())
 		limiter.Replace(bootstrap.Limits(fresh.Limits))
+		_, _ = application.SaveConfigRevision(context.Background(), repos.ConfigRev, "file-watcher", acl.Rules(), limiter.Rules())
 		return nil
 	}
 	go watchConfig(*cfgPath, reload, zapLog)
@@ -114,7 +128,9 @@ func main() {
 		WithPhase3(fxSvc, tenantSvc, limitRules).
 		WithOps(acl, limiter, reload).
 		WithJobs(jobs).
-		WithAuditLog(repos.Audit)
+		WithAuditLog(repos.Audit).
+		WithCluster(cluster).
+		WithRevisions(repos.ConfigRev)
 	if err := httpserver.Serve(cfg.HTTP.APIAddr, srv.Engine(), cfg.HTTP.ReadTimeout, cfg.HTTP.WriteTimeout, cfg.HTTP.ShutdownTimeout, zapLog); err != nil {
 		zapLog.Fatal("api exit", zap.Error(err))
 	}

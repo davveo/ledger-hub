@@ -2,7 +2,6 @@ package worker
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -10,25 +9,50 @@ import (
 
 	"github.com/davveo/ledger-hub/internal/application"
 	"github.com/davveo/ledger-hub/internal/config"
+	"github.com/davveo/ledger-hub/internal/observability"
 )
 
 type Runner struct {
-	cfg  config.WorkerConfig
-	log  *zap.Logger
-	jobs *application.Jobs
+	cfg     config.WorkerConfig
+	log     *zap.Logger
+	jobs    *application.Jobs
+	lease   *application.Lease
+	ready   func(context.Context) error
+	service string
 }
 
 func New(cfg config.WorkerConfig, log *zap.Logger, jobs *application.Jobs) *Runner {
-	return &Runner{cfg: cfg, log: log, jobs: jobs}
+	return &Runner{cfg: cfg, log: log, jobs: jobs, service: "ledger-worker"}
+}
+
+func (r *Runner) WithLease(l *application.Lease) *Runner {
+	r.lease = l
+	return r
+}
+
+func (r *Runner) WithReady(fn func(context.Context) error) *Runner {
+	r.ready = fn
+	return r
 }
 
 func (r *Runner) Engine() *gin.Engine {
 	e := gin.New()
-	e.Use(gin.Recovery())
-	e.GET("/healthz", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "ledger-worker"})
-	})
+	e.Use(gin.Recovery(), observability.HTTPMetrics())
+	observability.RegisterProbes(e, r.service, r.ready)
+	e.GET("/metrics", observability.MetricsHandler())
 	return e
+}
+
+func (r *Runner) runJob(ctx context.Context, name string, fn func()) {
+	if r.lease != nil && !r.lease.Acquire(ctx, name) {
+		r.log.Debug("skip job, not lease holder", zap.String("job", name))
+		return
+	}
+	if r.lease != nil {
+		r.lease.Hold(ctx, name, fn)
+		return
+	}
+	fn()
 }
 
 func (r *Runner) Start(ctx context.Context) {
@@ -56,12 +80,14 @@ func (r *Runner) Start(ctx context.Context) {
 	if sagaEvery <= 0 {
 		sagaEvery = 15 * time.Second
 	}
+	drainEvery := 15 * time.Second
 	expireTick := time.NewTicker(expireEvery)
 	reconTick := time.NewTicker(reconEvery)
 	assetTick := time.NewTicker(assetEvery)
 	feedTick := time.NewTicker(feedEvery)
 	idemTick := time.NewTicker(idemEvery)
 	sagaTick := time.NewTicker(sagaEvery)
+	drainTick := time.NewTicker(drainEvery)
 	go func() {
 		defer expireTick.Stop()
 		defer reconTick.Stop()
@@ -69,36 +95,56 @@ func (r *Runner) Start(ctx context.Context) {
 		defer feedTick.Stop()
 		defer idemTick.Stop()
 		defer sagaTick.Stop()
+		defer drainTick.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-expireTick.C:
-				run := r.jobs.ReleaseExpired(ctx)
-				r.log.Info("release expired", zap.String("status", run.Status), zap.Int("count", run.Count), zap.String("detail", run.Detail))
+				r.runJob(ctx, "release_expired", func() {
+					run := r.jobs.ReleaseExpired(ctx)
+					r.log.Info("release expired", zap.String("status", run.Status), zap.Int("count", run.Count), zap.String("detail", run.Detail), zap.String("instance_id", run.InstanceID), zap.Int64("duration_ms", run.DurationMs))
+				})
 			case <-reconTick.C:
-				run := r.jobs.Reconcile(ctx, "")
-				r.log.Info("daily reconcile", zap.String("status", run.Status), zap.Int("count", run.Count), zap.String("detail", run.Detail))
+				r.runJob(ctx, "reconcile", func() {
+					run := r.jobs.Reconcile(ctx, "")
+					r.log.Info("daily reconcile", zap.String("status", run.Status), zap.Int("count", run.Count), zap.String("detail", run.Detail))
+				})
+			case <-drainTick.C:
+				r.runJob(ctx, "queued-reconcile", func() {
+					run := r.jobs.DrainReconcile(ctx)
+					if run.Count > 0 || run.Status == "failed" || run.Status == "dead" {
+						r.log.Info("drain reconcile", zap.String("status", run.Status), zap.Int("count", run.Count))
+					}
+				})
 			case <-assetTick.C:
-				run := r.jobs.Expire(ctx)
-				if run.Count > 0 || run.Status == "failed" {
-					r.log.Info("asset expire", zap.String("status", run.Status), zap.Int("count", run.Count), zap.String("detail", run.Detail))
-				}
+				r.runJob(ctx, "expire", func() {
+					run := r.jobs.Expire(ctx)
+					if run.Count > 0 || run.Status == "failed" {
+						r.log.Info("asset expire", zap.String("status", run.Status), zap.Int("count", run.Count), zap.String("detail", run.Detail))
+					}
+				})
 			case <-feedTick.C:
-				run := r.jobs.FxFeed(ctx)
-				if run.Count > 0 || run.Status == "failed" {
-					r.log.Info("fx feed", zap.String("status", run.Status), zap.Int("count", run.Count), zap.String("detail", run.Detail))
-				}
+				r.runJob(ctx, "fx_feed", func() {
+					run := r.jobs.FxFeed(ctx)
+					if run.Count > 0 || run.Status == "failed" {
+						r.log.Info("fx feed", zap.String("status", run.Status), zap.Int("count", run.Count), zap.String("detail", run.Detail))
+					}
+				})
 			case <-idemTick.C:
-				run := r.jobs.PurgeIdempotency(ctx)
-				if run.Count > 0 || run.Status == "failed" {
-					r.log.Info("purge idempotency", zap.String("status", run.Status), zap.Int("count", run.Count))
-				}
+				r.runJob(ctx, "idempotency", func() {
+					run := r.jobs.PurgeIdempotency(ctx)
+					if run.Count > 0 || run.Status == "failed" {
+						r.log.Info("purge idempotency", zap.String("status", run.Status), zap.Int("count", run.Count))
+					}
+				})
 			case <-sagaTick.C:
-				run := r.jobs.ResumeSagas(ctx)
-				if run.Count > 0 || run.Status == "failed" {
-					r.log.Info("resume saga", zap.String("status", run.Status), zap.Int("count", run.Count), zap.String("detail", run.Detail))
-				}
+				r.runJob(ctx, "saga", func() {
+					run := r.jobs.ResumeSagas(ctx)
+					if run.Count > 0 || run.Status == "failed" {
+						r.log.Info("resume saga", zap.String("status", run.Status), zap.Int("count", run.Count), zap.String("detail", run.Detail))
+					}
+				})
 			}
 		}
 	}()

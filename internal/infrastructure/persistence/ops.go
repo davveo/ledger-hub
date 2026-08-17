@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -142,6 +143,10 @@ func (r *OpsRunRepo) Save(ctx context.Context, run *domain.OpsRun) error {
 		Status:     run.Status,
 		Detail:     run.Detail,
 		Count:      run.Count,
+		InstanceID: run.InstanceID,
+		Attempt:    run.Attempt,
+		LastError:  run.LastError,
+		DurationMs: run.DurationMs,
 		StartedAt:  run.StartedAt,
 		FinishedAt: run.FinishedAt,
 	}
@@ -168,9 +173,33 @@ func (r *OpsRunRepo) List(ctx context.Context, limit int) ([]*domain.OpsRun, err
 			Status:     rows[i].Status,
 			Detail:     rows[i].Detail,
 			Count:      rows[i].Count,
+			InstanceID: rows[i].InstanceID,
+			Attempt:    rows[i].Attempt,
+			LastError:  rows[i].LastError,
+			DurationMs: rows[i].DurationMs,
 			StartedAt:  rows[i].StartedAt,
 			FinishedAt: rows[i].FinishedAt,
 		})
+	}
+	return out, nil
+}
+
+func (r *OpsRunRepo) LastSuccess(ctx context.Context) (map[string]time.Time, error) {
+	type row struct {
+		Name       string
+		FinishedAt time.Time
+	}
+	var rows []row
+	err := dbFrom(ctx, r.db).Model(&LedgerOpsRun{}).
+		Select("name, MAX(finished_at) AS finished_at").
+		Where("status = ? AND finished_at IS NOT NULL", "done").
+		Group("name").Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]time.Time{}
+	for _, x := range rows {
+		out[x.Name] = x.FinishedAt
 	}
 	return out, nil
 }

@@ -18,6 +18,7 @@ mysql:
   max_idle_conns: 10
   max_open_conns: 50
   conn_max_lifetime: 30m
+  auto_migrate: true # 生产请设 false，改用 ledger-migrate
 
 log:
   level: debug
@@ -69,6 +70,10 @@ connector:
   ledger_base_url: "http://127.0.0.1:8088"
   mq_dir: data/mq
   mq_interval: 2s
+  kafka:
+    brokers: []
+    topic: ledger-events
+    group_id: ledger-connector
 
 worker:
   freeze_expire_interval: 30s
@@ -78,6 +83,7 @@ worker:
   idempotency_interval: 1h
   idempotency_retain: 192h
   saga_interval: 15s
+  lease_ttl: 30s
   fx_feed:
     - base_asset: BALANCE_CNY
       quote_asset: BALANCE_USD

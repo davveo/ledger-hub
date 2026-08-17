@@ -246,6 +246,10 @@ type OpsRun struct {
 	Status     string     `json:"status"`
 	Detail     string     `json:"detail,omitempty"`
 	Count      int        `json:"count"`
+	InstanceID string     `json:"instance_id,omitempty"`
+	Attempt    int        `json:"attempt"`
+	LastError  string     `json:"last_error,omitempty"`
+	DurationMs int64      `json:"duration_ms"`
 	StartedAt  time.Time  `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
@@ -365,18 +369,20 @@ const (
 	DiffChannelMismatch   = "channel_mismatch"
 	DiffCrossShardInFlight = "cross_shard_inflight"
 
+	ReconJobQueued   = "queued"
 	ReconJobRunning  = "running"
 	ReconJobDone     = "done"
 	ReconJobFailed   = "failed"
 	DiffStatusOpen     = "open"
 	DiffStatusResolved = "resolved"
+	ReconJobTypeDaily  = "daily"
 )
 
 type BizLine struct {
-	BizNo     string
-	Command   Command
-	AssetCode string
-	Amount    int64
+	BizNo     string  `json:"biz_no"`
+	Command   Command `json:"command"`
+	AssetCode string  `json:"asset_code"`
+	Amount    int64   `json:"amount"`
 }
 
 type ReconcileJob struct {
@@ -385,9 +391,13 @@ type ReconcileJob struct {
 	Date         string            `json:"date"`
 	SourceSystem string            `json:"source_system,omitempty"`
 	AssetCode    string            `json:"asset_code,omitempty"`
+	JobType      string            `json:"job_type,omitempty"`
+	Version      int               `json:"version"`
 	Status       string            `json:"status"`
+	Phase        string            `json:"phase,omitempty"`
 	Summary      *ReconcileSummary `json:"summary,omitempty"`
 	Note         string            `json:"note,omitempty"`
+	PayloadJSON  string            `json:"-"`
 	CreatedAt    time.Time         `json:"created_at"`
 }
 
@@ -408,18 +418,66 @@ type ReconcileSummary struct {
 }
 
 type ReconcileDiff struct {
-	DiffID       string  `json:"diff_id"`
-	JobID        string  `json:"job_id"`
-	Kind         string  `json:"kind"`
-	BizNo        string  `json:"biz_no,omitempty"`
-	Command      Command `json:"command,omitempty"`
-	AssetCode    string  `json:"asset_code,omitempty"`
-	BizAmount    int64   `json:"biz_amount"`
-	LedgerAmount int64   `json:"ledger_amount"`
-	AccountID    string  `json:"account_id,omitempty"`
-	Status       string  `json:"status"`
-	Note         string  `json:"note,omitempty"`
-	ResolvedBy   string  `json:"resolved_by,omitempty"`
+	DiffID       string     `json:"diff_id"`
+	JobID        string     `json:"job_id"`
+	Kind         string     `json:"kind"`
+	BizNo        string     `json:"biz_no,omitempty"`
+	Command      Command    `json:"command,omitempty"`
+	AssetCode    string     `json:"asset_code,omitempty"`
+	BizAmount    int64      `json:"biz_amount"`
+	LedgerAmount int64      `json:"ledger_amount"`
+	AccountID    string     `json:"account_id,omitempty"`
+	Status       string     `json:"status"`
+	Note         string     `json:"note,omitempty"`
+	Assignee     string     `json:"assignee,omitempty"`
+	ResolvedBy   string     `json:"resolved_by,omitempty"`
+	ClosedBy     string     `json:"closed_by,omitempty"`
+	ClosedAt     *time.Time `json:"closed_at,omitempty"`
+}
+
+type ReconcileDiffEvent struct {
+	EventID   string    `json:"event_id"`
+	DiffID    string    `json:"diff_id"`
+	Action    string    `json:"action"`
+	Operator  string    `json:"operator,omitempty"`
+	Detail    string    `json:"detail,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type JobLease struct {
+	JobName   string    `json:"job_name"`
+	Holder    string    `json:"holder"`
+	ExpiresAt time.Time `json:"expires_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type ConfigRevision struct {
+	RevisionID string    `json:"revision_id"`
+	Version    int64     `json:"version"`
+	Operator   string    `json:"operator,omitempty"`
+	Checksum   string    `json:"checksum,omitempty"`
+	Payload    string    `json:"payload,omitempty"`
+	AppliedAt  time.Time `json:"applied_at"`
+}
+
+const (
+	InboxPending = "pending"
+	InboxDone    = "done"
+	InboxRetry   = "retry"
+	InboxDead    = "dead"
+)
+
+type InboxMessage struct {
+	MessageID     string     `json:"message_id"`
+	Topic         string     `json:"topic"`
+	SchemaVersion int        `json:"schema_version"`
+	Payload       string     `json:"payload,omitempty"`
+	Status        string     `json:"status"`
+	Attempts      int        `json:"attempts"`
+	LastError     string     `json:"last_error,omitempty"`
+	NextRetryAt   *time.Time `json:"next_retry_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 type CommandResult struct {

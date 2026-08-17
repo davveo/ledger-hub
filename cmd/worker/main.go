@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -17,6 +18,7 @@ import (
 	httpserver "github.com/davveo/ledger-hub/internal/iface/http"
 	"github.com/davveo/ledger-hub/internal/infrastructure/logger"
 	"github.com/davveo/ledger-hub/internal/infrastructure/persistence"
+	"github.com/davveo/ledger-hub/internal/observability"
 	"github.com/davveo/ledger-hub/internal/worker"
 )
 
@@ -25,6 +27,9 @@ func main() {
 	flag.Parse()
 
 	cfg := config.MustLoad(*cfgPath)
+	if err := cfg.ValidateForEnv(); err != nil {
+		log.Fatal(err)
+	}
 	zapLog, err := logger.New(cfg.Log)
 	if err != nil {
 		log.Fatal(err)
@@ -36,9 +41,16 @@ func main() {
 		zapLog.Fatal("open mysql", zap.Error(err))
 	}
 
-	if err := cluster.AutoMigrate(); err != nil {
-		zapLog.Fatal("auto migrate", zap.Error(err))
+	if cfg.MySQL.AutoMigrate {
+		if err := cluster.AutoMigrate(); err != nil {
+			zapLog.Fatal("auto migrate", zap.Error(err))
+		}
+	} else {
+		zapLog.Info("mysql.auto_migrate=false, expect ledger-migrate to have run")
 	}
+
+	stop := observability.InitTrace(context.Background(), "ledger-worker")
+	defer stop()
 
 	repos := persistence.NewClusterRepos(cluster)
 	tx := persistence.NewClusterTxManager(cluster)
@@ -58,13 +70,19 @@ func main() {
 	for _, p := range cfg.Worker.FxFeed {
 		feeds = append(feeds, domain.FxFeedPair{TenantID: p.TenantID, BaseAsset: p.BaseAsset, QuoteAsset: p.QuoteAsset, Rate: p.Rate})
 	}
+	instanceID := application.NewInstanceID()
 	jobs := application.NewJobs(books, recon, expire, repos.Freeze, cfg.App.DefaultTenant).
 		WithFx(fxSvc, feeds).
 		WithTenants(repos.Tenant).
 		WithIdempotency(repos.Idempotency, cfg.Worker.IdempotencyRetain).
 		WithRuns(repos.OpsRun).
-		WithAudit(repos.OpsAudit)
-	run := worker.New(cfg.Worker, zapLog, jobs)
+		WithAudit(repos.OpsAudit).
+		WithInstance(instanceID).
+		WithRetry(3, time.Second)
+	lease := application.NewLease(repos.Lease, instanceID, cfg.Worker.LeaseTTL)
+	run := worker.New(cfg.Worker, zapLog, jobs).
+		WithLease(lease).
+		WithReady(observability.ClusterReady(cluster))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

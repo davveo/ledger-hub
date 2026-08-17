@@ -252,13 +252,17 @@ func (LedgerFxRate) TableName() string { return "ledger_fx_rate" }
 type LedgerReconcileJob struct {
 	ID           uint64 `gorm:"primaryKey;autoIncrement"`
 	JobID        string `gorm:"size:64;uniqueIndex;not null"`
-	TenantID     string `gorm:"size:64;index:idx_recon_latest,priority:1;not null"`
-	BizDate      string `gorm:"size:16;index:idx_recon_latest,priority:2;not null"`
-	SourceSystem string `gorm:"size:64;index:idx_recon_latest,priority:3"`
-	AssetCode    string `gorm:"size:64;index:idx_recon_latest,priority:4"`
-	Status       string `gorm:"size:16;not null"`
+	TenantID     string `gorm:"size:64;uniqueIndex:uk_recon_job;index:idx_recon_latest,priority:1;not null"`
+	BizDate      string `gorm:"size:16;uniqueIndex:uk_recon_job;index:idx_recon_latest,priority:2;not null"`
+	SourceSystem string `gorm:"size:64;uniqueIndex:uk_recon_job;index:idx_recon_latest,priority:3"`
+	AssetCode    string `gorm:"size:64;uniqueIndex:uk_recon_job;index:idx_recon_latest,priority:4"`
+	JobType      string `gorm:"size:32;uniqueIndex:uk_recon_job;not null;default:daily"`
+	Version      int    `gorm:"uniqueIndex:uk_recon_job;not null;default:1"`
+	Status       string `gorm:"size:16;index;not null"`
+	Phase        string `gorm:"size:32"`
 	SummaryJSON  string `gorm:"type:text"`
 	Note         string `gorm:"type:text"`
+	PayloadJSON  string `gorm:"type:text"`
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -278,10 +282,25 @@ type LedgerReconcileDiff struct {
 	AccountID    string `gorm:"size:64;index"`
 	Status       string `gorm:"size:16;index;not null"`
 	Note         string `gorm:"type:text"`
+	Assignee     string `gorm:"size:64;index"`
 	ResolvedBy   string `gorm:"size:64"`
+	ClosedBy     string `gorm:"size:64"`
+	ClosedAt     *time.Time
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
+
+type LedgerReconcileDiffEvent struct {
+	ID        uint64 `gorm:"primaryKey;autoIncrement"`
+	EventID   string `gorm:"size:64;uniqueIndex;not null"`
+	DiffID    string `gorm:"size:64;index;not null"`
+	Action    string `gorm:"size:32;not null"`
+	Operator  string `gorm:"size:64"`
+	Detail    string `gorm:"type:text"`
+	CreatedAt time.Time `gorm:"index"`
+}
+
+func (LedgerReconcileDiffEvent) TableName() string { return "ledger_reconcile_diff_event" }
 
 func (LedgerReconcileDiff) TableName() string { return "ledger_reconcile_diff" }
 
@@ -419,10 +438,14 @@ type LedgerOpsRun struct {
 	RunID      string `gorm:"size:64;uniqueIndex;not null"`
 	Name       string `gorm:"size:32;index;not null"`
 	TenantID   string `gorm:"size:64;index"`
-	Status     string `gorm:"size:16;not null"`
+	Status     string `gorm:"size:16;index;not null"`
 	Detail     string `gorm:"type:text"`
 	Count      int
-	StartedAt  time.Time
+	InstanceID string `gorm:"size:128;index"`
+	Attempt    int
+	LastError  string `gorm:"type:text"`
+	DurationMs int64
+	StartedAt  time.Time `gorm:"index"`
 	FinishedAt *time.Time
 }
 
@@ -461,3 +484,52 @@ type LedgerGatewayNonce struct {
 }
 
 func (LedgerGatewayNonce) TableName() string { return "ledger_gateway_nonce" }
+
+type LedgerJobLease struct {
+	ID        uint64    `gorm:"primaryKey;autoIncrement"`
+	JobName   string    `gorm:"size:64;uniqueIndex;not null"`
+	Holder    string    `gorm:"size:128;not null"`
+	ExpiresAt time.Time `gorm:"index;not null"`
+	UpdatedAt time.Time
+}
+
+func (LedgerJobLease) TableName() string { return "ledger_job_lease" }
+
+type LedgerConfigRevision struct {
+	ID         uint64 `gorm:"primaryKey;autoIncrement"`
+	RevisionID string `gorm:"size:64;uniqueIndex;not null"`
+	Version    int64  `gorm:"uniqueIndex;not null"`
+	Operator   string `gorm:"size:64"`
+	Checksum   string `gorm:"size:64"`
+	Payload    string `gorm:"type:text"`
+	AppliedAt  time.Time `gorm:"index"`
+}
+
+func (LedgerConfigRevision) TableName() string { return "ledger_config_revision" }
+
+type LedgerMQInbox struct {
+	ID            uint64 `gorm:"primaryKey;autoIncrement"`
+	MessageID     string `gorm:"size:128;uniqueIndex;not null"`
+	Topic         string `gorm:"size:64;index;not null"`
+	SchemaVersion int    `gorm:"not null;default:1"`
+	Payload       string `gorm:"type:text"`
+	Status        string `gorm:"size:16;index;not null"`
+	Attempts      int
+	LastError     string `gorm:"type:text"`
+	NextRetryAt   *time.Time `gorm:"index"`
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+func (LedgerMQInbox) TableName() string { return "ledger_mq_inbox" }
+
+type LedgerSchemaMigration struct {
+	ID        uint64 `gorm:"primaryKey;autoIncrement"`
+	Version   string `gorm:"size:16;uniqueIndex;not null"`
+	Name      string `gorm:"size:128;not null"`
+	AppliedAt time.Time
+	Success   bool
+	Error     string `gorm:"type:text"`
+}
+
+func (LedgerSchemaMigration) TableName() string { return "ledger_schema_migration" }

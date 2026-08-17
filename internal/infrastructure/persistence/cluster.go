@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"context"
 	"fmt"
 
 	"gorm.io/driver/mysql"
@@ -60,9 +61,31 @@ func (c *Cluster) SameShard(a, b string) bool {
 }
 
 func (c *Cluster) AutoMigrate() error {
+	if c == nil {
+		return fmt.Errorf("cluster is nil")
+	}
 	for _, db := range c.nodes {
 		if err := AutoMigrate(db); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func (c *Cluster) Ping(ctx context.Context) error {
+	if c == nil || len(c.nodes) == 0 {
+		return fmt.Errorf("cluster is nil")
+	}
+	for i, db := range c.nodes {
+		sqlDB, err := db.DB()
+		if err != nil {
+			return fmt.Errorf("shard %d: %w", i, err)
+		}
+		if err := sqlDB.PingContext(ctx); err != nil {
+			return fmt.Errorf("shard %d ping: %w", i, err)
+		}
+		if err := db.WithContext(ctx).Exec("SELECT 1").Error; err != nil {
+			return fmt.Errorf("shard %d select 1: %w", i, err)
 		}
 	}
 	return nil

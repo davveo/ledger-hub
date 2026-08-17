@@ -23,7 +23,7 @@ func TestConsolePage(t *testing.T) {
 		t.Fatalf("status %d", w.Code)
 	}
 	body := w.Body.String()
-	for _, want := range []string{"Ledger Hub", "资产", "对账", "风控", "作业", "审计", "过期待释放", "X-Operator", "/api/v1/ledger/console/overview", "modalBackdrop", "promptDialog", "confirmDialog", "downloadFile", "/ops/sagas", "retrySaga", "compensateSaga"} {
+	for _, want := range []string{"Ledger Hub", "资产", "对账", "风控", "作业", "审计", "过期待释放", "X-Operator", "/api/v1/ledger/console/overview", "modalBackdrop", "promptDialog", "confirmDialog", "downloadFile", "/ops/sagas", "retrySaga", "compensateSaga", "assignDiff", "queued-reconcile", "duration_ms", "instance_id", "config/revisions"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("console html missing %q", want)
 		}

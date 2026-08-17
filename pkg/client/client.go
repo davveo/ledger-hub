@@ -86,6 +86,8 @@ type Client struct {
 	secret     string
 	keyVersion string
 	tenantID   string
+	requestID  string
+	retries    int
 	http       *http.Client
 }
 
@@ -95,6 +97,7 @@ func New(baseURL, clientID, secret string) *Client {
 		clientID:   clientID,
 		secret:     secret,
 		keyVersion: "1",
+		retries:    2,
 		http:       &http.Client{Timeout: 10 * time.Second},
 	}
 }
@@ -111,35 +114,63 @@ func (c *Client) WithKeyVersion(version string) *Client {
 	return c
 }
 
-func (c *Client) Credit(ctx context.Context, body map[string]interface{}) (json.RawMessage, error) {
-	return c.post(ctx, "/api/v1/ledger/commands/credit", body)
+func (c *Client) WithTimeout(d time.Duration) *Client {
+	if c.http == nil {
+		c.http = &http.Client{}
+	}
+	c.http.Timeout = d
+	return c
 }
-func (c *Client) Debit(ctx context.Context, body map[string]interface{}) (json.RawMessage, error) {
-	return c.post(ctx, "/api/v1/ledger/commands/debit", body)
+
+func (c *Client) WithRequestID(id string) *Client {
+	c.requestID = id
+	return c
 }
-func (c *Client) Freeze(ctx context.Context, body map[string]interface{}) (json.RawMessage, error) {
-	return c.post(ctx, "/api/v1/ledger/commands/freeze", body)
+
+func (c *Client) WithRetries(n int) *Client {
+	c.retries = n
+	return c
 }
-func (c *Client) Capture(ctx context.Context, body map[string]interface{}) (json.RawMessage, error) {
-	return c.post(ctx, "/api/v1/ledger/commands/capture", body)
+
+func (c *Client) Credit(ctx context.Context, cmd Command) (json.RawMessage, error) {
+	cmd.Command = "Credit"
+	return c.do(ctx, http.MethodPost, "/api/v1/ledger/commands/credit", cmd)
 }
-func (c *Client) Release(ctx context.Context, body map[string]interface{}) (json.RawMessage, error) {
-	return c.post(ctx, "/api/v1/ledger/commands/release", body)
+func (c *Client) Debit(ctx context.Context, cmd Command) (json.RawMessage, error) {
+	cmd.Command = "Debit"
+	return c.do(ctx, http.MethodPost, "/api/v1/ledger/commands/debit", cmd)
 }
-func (c *Client) Transfer(ctx context.Context, body map[string]interface{}) (json.RawMessage, error) {
-	return c.post(ctx, "/api/v1/ledger/commands/transfer", body)
+func (c *Client) Freeze(ctx context.Context, cmd Command) (json.RawMessage, error) {
+	cmd.Command = "Freeze"
+	return c.do(ctx, http.MethodPost, "/api/v1/ledger/commands/freeze", cmd)
 }
-func (c *Client) Exchange(ctx context.Context, body map[string]interface{}) (json.RawMessage, error) {
-	return c.post(ctx, "/api/v1/ledger/commands/exchange", body)
+func (c *Client) Capture(ctx context.Context, cmd Command) (json.RawMessage, error) {
+	cmd.Command = "Capture"
+	return c.do(ctx, http.MethodPost, "/api/v1/ledger/commands/capture", cmd)
 }
-func (c *Client) Reverse(ctx context.Context, body map[string]interface{}) (json.RawMessage, error) {
-	return c.post(ctx, "/api/v1/ledger/commands/reverse", body)
+func (c *Client) Release(ctx context.Context, cmd Command) (json.RawMessage, error) {
+	cmd.Command = "Release"
+	return c.do(ctx, http.MethodPost, "/api/v1/ledger/commands/release", cmd)
+}
+func (c *Client) Transfer(ctx context.Context, cmd Command) (json.RawMessage, error) {
+	cmd.Command = "Transfer"
+	return c.do(ctx, http.MethodPost, "/api/v1/ledger/commands/transfer", cmd)
+}
+func (c *Client) Exchange(ctx context.Context, cmd Command) (json.RawMessage, error) {
+	cmd.Command = "Exchange"
+	return c.do(ctx, http.MethodPost, "/api/v1/ledger/commands/exchange", cmd)
+}
+func (c *Client) Reverse(ctx context.Context, cmd Command) (json.RawMessage, error) {
+	cmd.Command = "Reverse"
+	return c.do(ctx, http.MethodPost, "/api/v1/ledger/commands/reverse", cmd)
 }
 
 func (c *Client) Exec(ctx context.Context, cmd Command) (*CommandResult, error) {
 	path := "/api/v1/ledger/commands"
 	if cmd.Command != "" {
-		path = path + "/" + toPath(cmd.Command)
+		if p := toPath(cmd.Command); p != "" {
+			path = path + "/" + p
+		}
 	}
 	raw, err := c.do(ctx, http.MethodPost, path, cmd)
 	if err != nil {
@@ -199,22 +230,42 @@ func (c *Client) FreezesByHolder(ctx context.Context, holderType, holderID, asse
 	return c.do(ctx, http.MethodGet, "/api/v1/ledger/freezes?"+q.Encode(), nil)
 }
 
-func (c *Client) post(ctx context.Context, path string, body map[string]interface{}) (json.RawMessage, error) {
-	return c.do(ctx, http.MethodPost, path, body)
+func (c *Client) do(ctx context.Context, method, path string, body interface{}) (json.RawMessage, error) {
+	var last json.RawMessage
+	attempts := c.retries + 1
+	if attempts < 1 {
+		attempts = 1
+	}
+	for i := 0; i < attempts; i++ {
+		raw, status, err := c.roundTrip(ctx, method, path, body)
+		if err == nil {
+			return raw, nil
+		}
+		last = raw
+		if status != http.StatusBadGateway && status != http.StatusServiceUnavailable {
+			return raw, err
+		}
+		if i+1 < attempts {
+			time.Sleep(50 * time.Millisecond)
+		} else {
+			return raw, err
+		}
+	}
+	return last, fmt.Errorf("exhausted retries")
 }
 
-func (c *Client) do(ctx context.Context, method, path string, body interface{}) (json.RawMessage, error) {
+func (c *Client) roundTrip(ctx context.Context, method, path string, body interface{}) (json.RawMessage, int, error) {
 	var raw []byte
 	var err error
 	if body != nil {
 		raw, err = json.Marshal(body)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bytes.NewReader(raw))
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	u, _ := url.Parse(c.baseURL + path)
 	ts := sign.Timestamp()
@@ -226,23 +277,26 @@ func (c *Client) do(ctx context.Context, method, path string, body interface{}) 
 	req.Header.Set("X-Sign-Version", sign.VersionV2)
 	req.Header.Set("X-Key-Version", c.keyVersion)
 	req.Header.Set("X-Nonce", nonce)
+	if c.requestID != "" {
+		req.Header.Set("X-Request-Id", c.requestID)
+	}
 	if tenant != "" {
 		req.Header.Set("X-Tenant-Id", tenant)
 	}
 	req.Header.Set("X-Signature", sign.HMACV2(c.secret, c.clientID, method, u.Path, u.RawQuery, tenant, ts, nonce, raw))
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, resp.StatusCode, err
 	}
 	if resp.StatusCode >= 300 {
-		return b, fmt.Errorf("http %d: %s", resp.StatusCode, string(b))
+		return b, resp.StatusCode, fmt.Errorf("http %d: %s", resp.StatusCode, string(b))
 	}
-	return b, nil
+	return b, resp.StatusCode, nil
 }
 
 func toPath(cmd string) string {

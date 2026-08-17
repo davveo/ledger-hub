@@ -8,25 +8,29 @@ import (
 
 	"github.com/davveo/ledger-hub/internal/domain"
 	"github.com/davveo/ledger-hub/internal/infrastructure/idgen"
+	"github.com/davveo/ledger-hub/internal/observability"
 )
 
 type Jobs struct {
-	books   *Bookkeeping
-	recon   *ReconcileService
-	expire  *ExpireEngine
-	freezes domain.FreezeRepository
-	fx      *FxService
-	tenants domain.TenantRepository
-	idem    domain.IdempotencyRepository
-	runs    domain.OpsRunRepository
-	audit   domain.OpsAuditRepository
-	feeds   []domain.FxFeedPair
-	tenant  string
-	retain  time.Duration
+	books      *Bookkeeping
+	recon      *ReconcileService
+	expire     *ExpireEngine
+	freezes    domain.FreezeRepository
+	fx         *FxService
+	tenants    domain.TenantRepository
+	idem       domain.IdempotencyRepository
+	runs       domain.OpsRunRepository
+	audit      domain.OpsAuditRepository
+	feeds      []domain.FxFeedPair
+	tenant     string
+	retain     time.Duration
+	instanceID string
+	maxAttempt int
+	retryBase  time.Duration
 }
 
 func NewJobs(books *Bookkeeping, recon *ReconcileService, expire *ExpireEngine, freezes domain.FreezeRepository, tenant string) *Jobs {
-	return &Jobs{books: books, recon: recon, expire: expire, freezes: freezes, tenant: tenant, retain: 192 * time.Hour}
+	return &Jobs{books: books, recon: recon, expire: expire, freezes: freezes, tenant: tenant, retain: 192 * time.Hour, maxAttempt: 1, retryBase: 100 * time.Millisecond}
 }
 
 func (j *Jobs) WithFx(fx *FxService, feeds []domain.FxFeedPair) *Jobs {
@@ -58,6 +62,19 @@ func (j *Jobs) WithAudit(a domain.OpsAuditRepository) *Jobs {
 	return j
 }
 
+func (j *Jobs) WithInstance(id string) *Jobs {
+	j.instanceID = id
+	return j
+}
+
+func (j *Jobs) WithRetry(max int, base time.Duration) *Jobs {
+	if max > 0 {
+		j.maxAttempt = max
+	}
+	j.retryBase = base
+	return j
+}
+
 func (j *Jobs) Record(ctx context.Context, operator, action, tenant, target, detail string) {
 	if j == nil || j.audit == nil || action == "" {
 		return
@@ -76,6 +93,13 @@ func (j *Jobs) ListRuns(ctx context.Context, limit int) ([]*domain.OpsRun, error
 		return []*domain.OpsRun{}, nil
 	}
 	return j.runs.List(ctx, limit)
+}
+
+func (j *Jobs) LastSuccess(ctx context.Context) (map[string]time.Time, error) {
+	if j == nil || j.runs == nil {
+		return map[string]time.Time{}, nil
+	}
+	return j.runs.LastSuccess(ctx)
 }
 
 func (j *Jobs) ListActions(ctx context.Context, tenantID string, limit int) ([]*domain.OpsAudit, error) {
@@ -107,6 +131,14 @@ func (j *Jobs) tenantIDs(ctx context.Context) []string {
 }
 
 func (j *Jobs) track(ctx context.Context, name, tenant string, fn func() (int, string, error)) *domain.OpsRun {
+	max := 1
+	if j != nil && j.maxAttempt > 0 {
+		max = j.maxAttempt
+	}
+	base := time.Millisecond
+	if j != nil && j.retryBase > 0 {
+		base = j.retryBase
+	}
 	run := &domain.OpsRun{
 		RunID:     idgen.New("run_"),
 		Name:      name,
@@ -114,24 +146,51 @@ func (j *Jobs) track(ctx context.Context, name, tenant string, fn func() (int, s
 		Status:    "running",
 		StartedAt: time.Now().UTC(),
 	}
-	n, detail, err := fn()
+	if j != nil {
+		run.InstanceID = j.instanceID
+	}
+	var n int
+	var detail string
+	var err error
+	start := time.Now()
+	for attempt := 1; attempt <= max; attempt++ {
+		run.Attempt = attempt
+		n, detail, err = fn()
+		if err == nil {
+			break
+		}
+		run.LastError = err.Error()
+		if attempt < max && base > 0 {
+			time.Sleep(BackoffDuration(attempt-1, base, 5*time.Second))
+		}
+	}
 	now := time.Now().UTC()
 	run.FinishedAt = &now
 	run.Count = n
 	run.Detail = detail
+	run.DurationMs = time.Since(start).Milliseconds()
 	if err != nil {
-		run.Status = "failed"
+		if run.Attempt >= max && max > 1 {
+			run.Status = "dead"
+		} else {
+			run.Status = "failed"
+		}
+		if run.LastError == "" {
+			run.LastError = err.Error()
+		}
 		if run.Detail == "" {
 			run.Detail = err.Error()
-		} else {
+		} else if err.Error() != "" && run.Detail != err.Error() {
 			run.Detail = run.Detail + "; " + err.Error()
 		}
 	} else {
 		run.Status = "done"
+		run.LastError = ""
 	}
 	if j != nil && j.runs != nil {
 		_ = j.runs.Save(ctx, run)
 	}
+	observability.ObserveWorkerJob(name, run.Status, time.Since(start))
 	return run
 }
 
@@ -174,12 +233,23 @@ func (j *Jobs) Reconcile(ctx context.Context, date string) *domain.OpsRun {
 		}
 		n := 0
 		for _, tenant := range j.tenantIDs(ctx) {
-			if _, err := j.recon.Trigger(ctx, tenant, date, "", "", nil, nil); err != nil {
+			if _, err := j.recon.Enqueue(ctx, tenant, date, "", "", domain.ReconJobTypeDaily, false, nil, nil); err != nil {
 				return n, "date=" + date, err
 			}
 			n++
 		}
-		return n, "date=" + date, nil
+		d, err := j.recon.DrainQueued(ctx, 50)
+		return n + d, "date=" + date, err
+	})
+}
+
+func (j *Jobs) DrainReconcile(ctx context.Context) *domain.OpsRun {
+	return j.track(ctx, "queued-reconcile", "", func() (int, string, error) {
+		if j.recon == nil {
+			return 0, "", nil
+		}
+		n, err := j.recon.DrainQueued(ctx, 50)
+		return n, "", err
 	})
 }
 
@@ -264,6 +334,31 @@ func (j *Jobs) ResumeSagas(ctx context.Context) *domain.OpsRun {
 			return 0, "", nil
 		}
 		n, err := j.books.ResumeOpenSagas(ctx, 50)
+		refreshSagaMetrics(ctx, j.books)
 		return n, "", err
 	})
+}
+
+func refreshSagaMetrics(ctx context.Context, books *Bookkeeping) {
+	if books == nil {
+		return
+	}
+	list, err := books.ListSagas(ctx, "", "", 200)
+	if err != nil {
+		return
+	}
+	oldest := time.Duration(0)
+	now := time.Now().UTC()
+	n := 0
+	for _, sg := range list {
+		if sg.Status == domain.SagaCompleted || sg.Status == domain.SagaFailed {
+			continue
+		}
+		n++
+		age := now.Sub(sg.CreatedAt)
+		if oldest == 0 || age > oldest {
+			oldest = age
+		}
+	}
+	observability.SetSagaPending(n, oldest)
 }

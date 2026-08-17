@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"encoding/json"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,14 +18,16 @@ import (
 
 	"github.com/davveo/ledger-hub/internal/config"
 	"github.com/davveo/ledger-hub/internal/domain"
+	"github.com/davveo/ledger-hub/internal/observability"
 	"github.com/davveo/ledger-hub/pkg/sign"
 )
 
 type Server struct {
-	cfg   config.GatewayConfig
-	proxy *httputil.ReverseProxy
-	audit domain.AuditRepository
-	nonce domain.NonceRepository
+	cfg     config.GatewayConfig
+	proxy   *httputil.ReverseProxy
+	audit   domain.AuditRepository
+	nonce   domain.NonceRepository
+	ready   *observability.CachedCheck
 }
 
 func New(cfg config.GatewayConfig) (*Server, error) {
@@ -32,7 +36,10 @@ func New(cfg config.GatewayConfig) (*Server, error) {
 		return nil, err
 	}
 	proxy := httputil.NewSingleHostReverseProxy(u)
-	return &Server{cfg: cfg, proxy: proxy, nonce: newMemoryNonce()}, nil
+	s := &Server{cfg: cfg, proxy: proxy, nonce: newMemoryNonce()}
+	liveURL := strings.TrimRight(cfg.Upstream, "/") + "/livez"
+	s.ready = observability.NewCachedCheck(observability.HTTPReady(liveURL, 2*time.Second), 5*time.Second)
+	return s, nil
 }
 
 func (s *Server) WithAudit(a domain.AuditRepository) *Server {
@@ -49,10 +56,13 @@ func (s *Server) WithNonce(n domain.NonceRepository) *Server {
 
 func (s *Server) Engine() *gin.Engine {
 	r := gin.New()
-	r.Use(gin.Recovery(), gin.Logger())
-	r.GET("/healthz", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "ledger-gateway"})
-	})
+	r.Use(gin.Recovery(), gin.Logger(), observability.EnsureTraceparent(), observability.GinTrace("ledger-gateway"), observability.HTTPMetrics())
+	readyFn := func(ctx context.Context) error { return nil }
+	if s.ready != nil {
+		readyFn = s.ready.Ready
+	}
+	observability.RegisterProbes(r, "ledger-gateway", readyFn)
+	r.GET("/metrics", observability.MetricsHandler())
 	lim := newClientLimiter(s.cfg)
 	auth := s.auth()
 	audit := s.auditMW()
@@ -65,6 +75,17 @@ func (s *Server) Engine() *gin.Engine {
 
 func (s *Server) forward() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		rid := c.GetHeader("X-Request-Id")
+		if rid == "" {
+			rid = strconv.FormatInt(time.Now().UnixNano(), 36)
+			c.Request.Header.Set("X-Request-Id", rid)
+		}
+		tp := c.GetHeader("traceparent")
+		if tp == "" {
+			tp = observability.NewTraceparent()
+			c.Request.Header.Set("traceparent", tp)
+		}
+		observability.InjectUpstream(c.Request, rid, tp)
 		s.proxy.ServeHTTP(c.Writer, c.Request)
 	}
 }

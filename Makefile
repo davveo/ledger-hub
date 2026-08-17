@@ -1,4 +1,4 @@
-.PHONY: tidy build test api gateway worker connector docker-up docker-down
+.PHONY: tidy build test api gateway worker connector migrate docker-up docker-down
 
 tidy:
 	go mod tidy
@@ -12,6 +12,7 @@ build:
 	go build -o bin/ledger-gateway ./cmd/gateway
 	go build -o bin/ledger-worker ./cmd/worker
 	go build -o bin/ledger-connector ./cmd/connector
+	go build -o bin/ledger-migrate ./cmd/migrate
 
 api:
 	go run ./cmd/api -config configs/config.yaml
@@ -24,6 +25,9 @@ worker:
 
 connector:
 	go run ./cmd/connector -config configs/config.yaml
+
+migrate:
+	go run ./cmd/migrate -config configs/config.yaml
 
 docker-up:
 	docker compose -f deployments/docker-compose.yaml up -d --build

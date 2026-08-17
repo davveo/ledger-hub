@@ -339,6 +339,7 @@ function render() {
   if (p === 'reconcile') run(() => refreshRecon());
   if (p === 'jobs') run(() => loadJobs());
   if (p === 'audit') run(() => loadAudit());
+  if (p === 'risk') run(() => loadConfigRevisions());
 }
 
 function viewDash() {
@@ -483,6 +484,7 @@ function viewJobs() {
         <button onclick="runJob('fx_feed')">汇率 Feed</button>
         <button class="ghost" onclick="runJob('idempotency')">清理幂等</button>
         <button class="ghost" onclick="runJob('saga')">续跑 Saga</button>
+        <button class="ghost" onclick="runJob('queued-reconcile')">领取排队对账</button>
       </div>
       <p class="muted">结果写入作业记录。过期入账仅在策略命中时过账；试算不记账。</p>
     </div>
@@ -561,7 +563,9 @@ function viewRecon() {
       <div class="row">
         <input id="diffId" placeholder="diff_id"/>
         <input id="diffNote" placeholder="关闭说明"/>
+        <input id="diffAssignee" placeholder="指派给"/>
         <button onclick="resolveDiff()">关闭差异</button>
+        <button class="ghost" onclick="assignDiff()">指派</button>
         <button class="ghost" onclick="loadOpenDiffs()">刷新待关闭</button>
       </div>
       <div id="openDiffTable"><p class="muted">加载中…</p></div>
@@ -579,6 +583,7 @@ function viewRisk() {
         <button onclick="reloadCfg()">重载 ACL / 限额</button>
         <span class="muted">改 yaml 后点这里，或等 API 15s 扫描 mtime。</span>
       </div>
+      <p class="muted" id="cfgRevLine">配置版本：加载中…</p>
     </div>
     <div class="card"><h3>ACL 规则</h3>${table(
       [{label:'租户', key:'tenant_id'}, {label:'系统', key:'source_system'}, {label:'命令', value: r => (r.commands||[]).join(', ')}, {label:'资产', value: r => (r.assets||[]).join(', ')}],
@@ -812,9 +817,10 @@ async function refreshRecon() {
     const list = jobs.data || [];
     $('jobTable').innerHTML = table(
       [{label:'Job', key:'job_id', mono:true}, {label:'日期', key:'date'}, {label:'系统', key:'source_system'}, {label:'资产', key:'asset_code'},
-       {label:'状态', html:true, value: r => badge(v(r,'status'))}, {label:'时间', key:'created_at'}],
+       {label:'版本', key:'version'}, {label:'状态', html:true, value: r => badge(v(r,'status'))}, {label:'时间', key:'created_at'}],
       list,
-      r => `<button class="ghost" onclick="openJob('${esc(v(r,'job_id'))}')">查看</button>`
+      r => `<button class="ghost" onclick="openJob('${esc(v(r,'job_id'))}')">查看</button>
+        <button class="ghost" onclick="rerunJob('${esc(v(r,'job_id'))}')">重跑</button>`
     );
   } catch (e) { $('jobTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
   try {
@@ -845,8 +851,12 @@ async function loadOpenDiffs() {
 async function runRecon() {
   const body = {date: $('reconDate').value, source_system: $('reconSys').value, asset_code: $('reconAsset').value};
   const j = await api('/api/v1/ledger/reconcile/jobs', {method:'POST', body: JSON.stringify(body)});
-  toast('对账完成');
-  showReport(j.data);
+  toast('对账已排队 ' + ((j.data && j.data.job_id) || '') + ' v' + ((j.data && j.data.version) || ''));
+  refreshRecon();
+}
+async function rerunJob(id) {
+  const j = await api('/api/v1/ledger/reconcile/jobs/' + encodeURIComponent(id) + '/rerun', {method:'POST', body:'{}'});
+  toast('已强制新版本 ' + ((j.data && j.data.job_id) || ''));
   refreshRecon();
 }
 async function loadReport() {
@@ -883,6 +893,13 @@ async function resolveDiff() {
   loadOpenDiffs().catch(() => {});
   if ($('reconDate').value) loadReport().catch(() => {});
 }
+async function assignDiff() {
+  await api('/api/v1/ledger/reconcile/diffs/' + encodeURIComponent($('diffId').value) + '/assign', {
+    method:'POST', body: JSON.stringify({assignee: $('diffAssignee').value, note: $('diffNote').value})
+  });
+  toast('已指派');
+  loadOpenDiffs().catch(() => {});
+}
 
 async function reloadCfg() {
   const j = await api('/api/v1/ledger/ops/reload', {method:'POST', body:'{}'});
@@ -890,15 +907,35 @@ async function reloadCfg() {
   overview.limits = (j.data && j.data.limits) || overview.limits;
   overview.acl = (j.data && j.data.acl) || overview.acl;
   render();
+  loadConfigRevisions().catch(() => {});
+}
+async function loadConfigRevisions() {
+  if (!$('cfgRevLine')) return;
+  try {
+    const j = await api('/api/v1/ledger/ops/config/revisions?limit=1');
+    const rows = j.data || [];
+    const last = rows[0];
+    if (last) $('cfgRevLine').textContent = '最近配置版本 v' + (last.version || '') + ' @ ' + (last.applied_at || '') + ' by ' + (last.operator || '');
+    else $('cfgRevLine').textContent = '尚无配置版本记录';
+  } catch (e) { $('cfgRevLine').textContent = e.message; }
 }
 
 async function loadJobs() {
   try {
     const j = await api('/api/v1/ledger/ops/jobs?limit=20');
-    if ($('opsJobTable')) $('opsJobTable').innerHTML = table(
-      [{label:'Run', key:'run_id', mono:true}, {label:'作业', key:'name'}, {label:'状态', html:true, value: r => badge(v(r,'status'))},
-       {label:'笔数', key:'count'}, {label:'详情', key:'detail'}, {label:'开始', key:'started_at'}, {label:'结束', key:'finished_at'}],
-      j.data || []
+    const payload = j.data || {};
+    const rows = Array.isArray(payload) ? payload : (payload.items || []);
+    const last = payload.last_success || {};
+    const lastLine = Object.keys(last).map(k => k + '=' + last[k]).join(' · ');
+    if ($('opsJobTable')) $('opsJobTable').innerHTML =
+      (lastLine ? '<p class="muted">最后成功：' + esc(lastLine) + '</p>' : '') +
+      table(
+      [{label:'Run', key:'run_id', mono:true}, {label:'作业', key:'name'}, {label:'实例', key:'instance_id', mono:true},
+       {label:'状态', html:true, value: r => badge(v(r,'status'))},
+       {label:'尝试', key:'attempt'}, {label:'耗时ms', key:'duration_ms'},
+       {label:'笔数', key:'count'}, {label:'错误', key:'last_error'}, {label:'详情', key:'detail'},
+       {label:'开始', key:'started_at'}, {label:'结束', key:'finished_at'}],
+      rows
     );
   } catch (e) { if ($('opsJobTable')) $('opsJobTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
   loadExpirePreview().catch(() => {});

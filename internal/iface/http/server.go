@@ -10,6 +10,7 @@ import (
 
 	"github.com/davveo/ledger-hub/internal/application"
 	"github.com/davveo/ledger-hub/internal/domain"
+	"github.com/davveo/ledger-hub/internal/observability"
 )
 
 type Server struct {
@@ -27,6 +28,8 @@ type Server struct {
 	tenant   string
 	jobs     *application.Jobs
 	audit    domain.AuditRepository
+	cluster  observability.Pinger
+	revs     domain.ConfigRevisionRepository
 }
 
 func New(assets *application.AssetService, accounts *application.AccountService, books *application.Bookkeeping, query *application.QueryService, recon *application.ReconcileService, defaultTenant string) *Server {
@@ -60,12 +63,21 @@ func (s *Server) WithAuditLog(a domain.AuditRepository) *Server {
 	return s
 }
 
+func (s *Server) WithCluster(p observability.Pinger) *Server {
+	s.cluster = p
+	return s
+}
+
+func (s *Server) WithRevisions(r domain.ConfigRevisionRepository) *Server {
+	s.revs = r
+	return s
+}
+
 func (s *Server) Engine() *gin.Engine {
 	r := gin.New()
-	r.Use(gin.Recovery(), requestID(), accessLog())
-	r.GET("/healthz", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "ledger-api"})
-	})
+	r.Use(gin.Recovery(), requestID(), observability.EnsureTraceparent(), observability.GinTrace("ledger-api"), observability.HTTPMetrics(), observability.RequestLog(nil), accessLog())
+	observability.RegisterProbes(r, "ledger-api", observability.ClusterReady(s.cluster))
+	r.GET("/metrics", observability.MetricsHandler())
 	r.GET("/console", s.consolePage)
 	g := r.Group("/api/v1/ledger")
 	{
@@ -117,16 +129,20 @@ func (s *Server) Engine() *gin.Engine {
 		g.GET("/ops/sagas", s.listSagas)
 		g.POST("/ops/sagas/:id/retry", s.retrySaga)
 		g.POST("/ops/sagas/:id/compensate", s.compensateSaga)
+		g.GET("/ops/config/revisions", s.listConfigRevisions)
 		g.GET("/openapi.yaml", s.openapiSpec)
 
 		g.POST("/reconcile/jobs", s.triggerReconcile)
 		g.GET("/reconcile/jobs", s.listReconcileJobs)
 		g.GET("/reconcile/jobs/:id", s.getReconcileJob)
+		g.POST("/reconcile/jobs/:id/rerun", s.rerunReconcile)
 		g.GET("/reconcile/reports/:date", s.getReconcileReport)
 		g.GET("/reconcile/files", s.listReconcileFiles)
 		g.GET("/reconcile/files/:name", s.getReconcileFile)
 		g.GET("/reconcile/diffs", s.listOpenDiffs)
 		g.POST("/reconcile/diffs/:id/resolve", s.resolveDiff)
+		g.POST("/reconcile/diffs/:id/assign", s.assignDiff)
+		g.GET("/reconcile/diffs/:id/events", s.listDiffEvents)
 
 		g.GET("/console/overview", s.consoleOverview)
 	}
@@ -330,8 +346,22 @@ func (s *Server) handleCommand(c *gin.Context, forced domain.Command) {
 	}
 	res, err := s.books.Execute(c.Request.Context(), req)
 	if err != nil {
+		result := "error"
+		if de, okErr := err.(*domain.Error); okErr {
+			result = strconv.Itoa(de.Code)
+		}
+		observability.ObserveCommand(string(req.Command), result)
 		fail(c, err)
 		return
+	}
+	result := "ok"
+	if res != nil && res.IdempotentReplay {
+		result = "idempotent"
+	}
+	observability.ObserveCommand(string(req.Command), result)
+	c.Set("biz_no", req.BizNo)
+	if res != nil {
+		c.Set("journal_id", res.JournalID)
 	}
 	if s.jobs != nil && (req.Command == domain.CmdReverse || req.Command == domain.CmdCapture || req.Command == domain.CmdRelease) {
 		s.jobs.Record(c.Request.Context(), s.operator(c), string(req.Command), req.TenantID, req.BizNo, req.RelatedBizNo)
@@ -541,6 +571,8 @@ func (s *Server) triggerReconcile(c *gin.Context) {
 		Date         string `json:"date"`
 		SourceSystem string `json:"source_system"`
 		AssetCode    string `json:"asset_code"`
+		JobType      string `json:"job_type"`
+		ForceNew     bool   `json:"force_new_version"`
 		BizLines     []struct {
 			BizNo     string `json:"biz_no"`
 			Command   string `json:"command"`
@@ -586,12 +618,17 @@ func (s *Server) triggerReconcile(c *gin.Context) {
 			Amount:    amt,
 		})
 	}
-	rep, err := s.recon.Trigger(c.Request.Context(), s.tenantID(c, ""), body.Date, body.SourceSystem, body.AssetCode, lines, channels)
+	rep, err := s.recon.Enqueue(c.Request.Context(), s.tenantID(c, ""), body.Date, body.SourceSystem, body.AssetCode, body.JobType, body.ForceNew, lines, channels)
 	if err != nil {
 		fail(c, err)
 		return
 	}
-	ok(c, rep)
+	c.JSON(http.StatusAccepted, envelope{Code: 0, Data: gin.H{
+		"job_id":  rep.JobID,
+		"status":  rep.Status,
+		"version": rep.Version,
+		"phase":   rep.Phase,
+	}})
 }
 
 func (s *Server) listReconcileJobs(c *gin.Context) {
@@ -643,6 +680,9 @@ func (s *Server) getReconcileFile(c *gin.Context) {
 	if err != nil {
 		fail(c, err)
 		return
+	}
+	if s.jobs != nil {
+		s.jobs.Record(c.Request.Context(), s.operator(c), "download_file", s.tenantID(c, ""), c.Param("name"), "")
 	}
 	c.FileAttachment(p, c.Param("name"))
 }
@@ -917,7 +957,19 @@ func (s *Server) reloadConfig(c *gin.Context) {
 	if s.acl != nil {
 		rules = s.acl.Rules()
 	}
-	ok(c, gin.H{"reloaded": true, "limits": s.limits, "acl": rules})
+	rev, err := application.SaveConfigRevision(c.Request.Context(), s.revs, s.operator(c), rules, s.limits)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	if s.jobs != nil {
+		detail := ""
+		if rev != nil {
+			detail = strconv.FormatInt(rev.Version, 10)
+		}
+		s.jobs.Record(c.Request.Context(), s.operator(c), "reload", s.tenantID(c, ""), "", detail)
+	}
+	ok(c, gin.H{"reloaded": true, "limits": s.limits, "acl": rules, "revision": rev})
 }
 
 func parsePage(c *gin.Context) domain.Page {

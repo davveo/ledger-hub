@@ -25,7 +25,8 @@ API 前缀：
 | `X-Nonce` | V2 必填，时间窗内不可重复 |
 | `X-Key-Version` | 密钥版本，缺省 `1` |
 | `X-Tenant-Id` | 当前租户；未传时使用 `gateway.default_tenant` |
-| `X-Request-Id` | 推荐传入，用于链路排查 |
+| `X-Request-Id` | 推荐传入，用于链路排查；Gateway 会转发给上游 |
+| `traceparent` | W3C 追踪；缺省时服务端生成并继续传播 |
 | `Content-Type` | 写请求使用 `application/json` |
 
 运营控制台只用 `X-Console-Token`，**禁止** `?console_token=`。
@@ -104,6 +105,28 @@ wallet:fx:F20260817001
   "message": "余额不足"
 }
 ```
+
+`POST /reconcile/jobs` 与 `POST .../jobs/{id}/rerun` 成功时 HTTP **202**（`code` 仍为 0）。金额字段一律最小单位整数字符串。分页查询 `limit` 默认 50、最大 200，响应含 `items` 与总数（若该接口提供）。
+
+Go SDK：`pkg/client` 的 `Credit`/`Debit`/… 接受 `Command`；推荐 `Exec()`。`WithTimeout`、`WithRequestID`；对 HTTP 502/503 有限重试。
+
+### 2.4 探针、指标与密钥
+
+进程根路径（无 `/api/v1/ledger` 前缀）：
+
+```http
+GET /livez      # 存活，200
+GET /readyz     # API/Worker ping MySQL 主库与各分片，失败 503；Gateway 短超时探测上游并缓存约 5s
+GET /healthz    # /livez 别名
+GET /metrics    # Prometheus（API / Gateway / Worker）
+```
+
+生产密钥在 yaml 之后用环境变量覆盖，日志不打印密钥值：
+
+- `LEDGER_GATEWAY_CONSOLE_TOKEN`
+- `LEDGER_GATEWAY_CLIENT_<CLIENTID>_SECRET`（CLIENTID 大写，连字符改下划线）
+
+`app.env` 为 `prod` / `production` 时：空 token、`dev-console-token`、空或 `dev-` 前缀 client secret 会拒绝启动。Schema 用 `make migrate` / `bin/ledger-migrate`；生产请设 `mysql.auto_migrate: false`。演进顺序：**expand**（新列可空）→ **migrate**（回填）→ **contract**（加约束）。
 
 ## 3. 记账命令
 
@@ -308,20 +331,41 @@ GET  /api/v1/ledger/fx/rates/{rate_id}
 
 这些接口属于管理能力，不应开放给普通业务客户端。
 
+运营（经 Gateway 须带 `X-Console-Token`）：
+
+```http
+GET  /api/v1/ledger/ops/jobs
+POST /api/v1/ledger/ops/jobs/{name}
+GET  /api/v1/ledger/ops/sagas?status=
+POST /api/v1/ledger/ops/sagas/{id}/retry
+POST /api/v1/ledger/ops/sagas/{id}/compensate
+POST /api/v1/ledger/ops/reload
+GET  /api/v1/ledger/ops/config/revisions?limit=
+GET  /api/v1/ledger/ops/audits?limit=
+GET  /api/v1/ledger/ops/actions?limit=
+GET  /api/v1/ledger/ops/alerts?limit=
+GET  /api/v1/ledger/openapi.yaml
+```
+
 ## 7. 对账
 
 ```http
-POST /api/v1/ledger/reconcile/jobs
+POST /api/v1/ledger/reconcile/jobs          # 202 入队
 GET  /api/v1/ledger/reconcile/jobs?limit=20
 GET  /api/v1/ledger/reconcile/jobs/{job_id}
+POST /api/v1/ledger/reconcile/jobs/{job_id}/rerun
 GET  /api/v1/ledger/reconcile/reports/{date}?source_system=order&asset_code=POINT
 GET  /api/v1/ledger/reconcile/files
 GET  /api/v1/ledger/reconcile/files/{name}
 GET  /api/v1/ledger/reconcile/diffs
 POST /api/v1/ledger/reconcile/diffs/{diff_id}/resolve
+POST /api/v1/ledger/reconcile/diffs/{diff_id}/assign
+GET  /api/v1/ledger/reconcile/diffs/{diff_id}/events
 ```
 
-发起对账：
+成功时 HTTP **202**，`data` 含 `job_id`、`status`（通常 `queued`）、`version`。Worker 领取后 `GET .../jobs/{id}` 可见 `phase`/`summary`。
+
+同一 `(tenant_id, date, source_system, asset_code, job_type, version)` 已有 queued/running/done 时复用，不建重复任务。`"force_new_version": true` 或 `POST .../rerun` 升版本。
 
 ```json
 {
@@ -353,6 +397,8 @@ POST /api/v1/ledger/reconcile/diffs/{diff_id}/resolve
 POST /connector/order/events
 POST /connector/pay/events
 POST /connector/mq/events
+GET  /connector/mq/inbox?status=
+POST /connector/mq/inbox/{message_id}/replay
 ```
 
 订单事件：
@@ -366,7 +412,7 @@ POST /connector/mq/events
 - `paid` → Credit
 - `refund` → Credit 并关联原业务号
 
-Connector 用于演示 Adapter Contract，不等同于生产 MQ 中间件。
+Connector 用于 Adapter Contract。事件带 `schema_version`（默认 1）。HTTP/文件先入 `ledger_mq_inbox` 再处理；失败指数退避，超过次数 `dead`，可用 replay。`connector.kafka.brokers` 非空时启动 Kafka 消费者。
 
 ## 9. 错误码
 

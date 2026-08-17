@@ -1,228 +1,737 @@
 openapi: 3.0.3
 info:
   title: Ledger Hub API
-  version: "1.1.0"
-  description: 通用账本中台 HTTP 接口。金额均为最小单位整数，JSON 用字符串传递。
+  version: "1.2.0"
+  description: |
+    通用账本中台 HTTP 接口。金额均为最小单位整数，JSON 用字符串传递。
+    成功信封 `{"code":0,"data":...}`；错误信封 `{"code":40001,"message":"..."}`。
+    分页 `limit` 默认 50、最大 200，`offset` 从 0 开始。
+    进程探针（无 /api/v1/ledger 前缀）：GET /livez、GET /readyz、GET /healthz（liveness 别名）、GET /metrics。
 servers:
   - url: /api/v1/ledger
+tags:
+  - name: commands
+  - name: assets
+  - name: accounts
+  - name: freezes
+  - name: journals
+  - name: fx
+  - name: tenants
+  - name: reconcile
+  - name: ops
+  - name: probes
 paths:
   /commands:
     post:
+      tags: [commands]
       summary: 聚合记账命令
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/Command"
+            schema: {$ref: "#/components/schemas/Command"}
+            example:
+              command: Credit
+              source_system: campaign
+              biz_no: "campaign:signin:u123:20260817"
+              holder: {type: user, id: u_123}
+              asset_code: POINT
+              amount: "100"
       responses:
         "200":
           description: 成功
           content:
             application/json:
-              schema:
-                $ref: "#/components/schemas/Envelope"
+              schema: {$ref: "#/components/schemas/Envelope"}
+        "400": {$ref: "#/components/responses/Error"}
   /commands/credit:
     post:
+      tags: [commands]
       summary: Credit
       requestBody:
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/Command"
+            schema: {$ref: "#/components/schemas/Command"}
       responses:
-        "200":
-          description: ok
+        "200": {description: ok}
+        "400": {$ref: "#/components/responses/Error"}
   /commands/debit:
     post:
+      tags: [commands]
       summary: Debit
       requestBody:
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/Command"
+            schema: {$ref: "#/components/schemas/Command"}
       responses:
-        "200":
-          description: ok
+        "200": {description: ok}
   /commands/freeze:
     post:
+      tags: [commands]
       summary: Freeze
       requestBody:
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/Command"
+            schema: {$ref: "#/components/schemas/Command"}
       responses:
-        "200":
-          description: ok
+        "200": {description: ok}
   /commands/capture:
     post:
+      tags: [commands]
       summary: Capture
       requestBody:
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/Command"
+            schema: {$ref: "#/components/schemas/Command"}
       responses:
-        "200":
-          description: ok
+        "200": {description: ok}
   /commands/release:
     post:
+      tags: [commands]
       summary: Release
       requestBody:
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/Command"
+            schema: {$ref: "#/components/schemas/Command"}
       responses:
-        "200":
-          description: ok
+        "200": {description: ok}
   /commands/transfer:
     post:
+      tags: [commands]
       summary: Transfer
       requestBody:
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/Command"
+            schema: {$ref: "#/components/schemas/Command"}
       responses:
-        "200":
-          description: ok
+        "200": {description: ok}
   /commands/exchange:
     post:
+      tags: [commands]
       summary: Exchange
       requestBody:
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/Command"
+            schema: {$ref: "#/components/schemas/Command"}
       responses:
-        "200":
-          description: ok
+        "200": {description: ok}
   /commands/reverse:
     post:
+      tags: [commands]
       summary: Reverse
       requestBody:
         content:
           application/json:
-            schema:
-              $ref: "#/components/schemas/Command"
+            schema: {$ref: "#/components/schemas/Command"}
       responses:
-        "200":
-          description: ok
+        "200": {description: ok}
+  /assets:
+    get:
+      tags: [assets]
+      summary: 列出当前租户资产
+      responses:
+        "200": {description: 资产列表}
+    post:
+      tags: [assets]
+      summary: 登记资产
+      requestBody:
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Asset"}
+      responses:
+        "200": {description: ok}
+  /assets/{asset_code}:
+    get:
+      tags: [assets]
+      summary: 资产详情
+      parameters:
+        - in: path
+          name: asset_code
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: 资产}
+        "404": {$ref: "#/components/responses/Error"}
+  /assets/{asset_code}/disable:
+    post:
+      tags: [assets]
+      summary: 停用资产
+      parameters:
+        - in: path
+          name: asset_code
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: ok}
+  /assets/{asset_code}/enable:
+    post:
+      tags: [assets]
+      summary: 启用资产
+      parameters:
+        - in: path
+          name: asset_code
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: ok}
   /accounts:
     get:
+      tags: [accounts]
       summary: 查询账户；holder_id 且无 asset_code 时返回该持有人全部币种
       parameters:
         - in: query
           name: holder_id
-          schema: { type: string }
+          schema: {type: string}
         - in: query
           name: holder_type
-          schema: { type: string }
+          schema: {type: string}
         - in: query
           name: asset_code
-          schema: { type: string }
+          schema: {type: string}
       responses:
         "200":
           description: 单账户或账户列表
+  /accounts/open:
+    post:
+      tags: [accounts]
+      summary: 显式开户
+      responses:
+        "200": {description: 账户}
+  /accounts/{account_id}:
+    get:
+      tags: [accounts]
+      summary: 按 ID 查账户（必须属于当前租户，否则 40401）
+      parameters:
+        - in: path
+          name: account_id
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: 账户，金额为字符串}
+        "404": {$ref: "#/components/responses/Error"}
+  /accounts/{account_id}/entries:
+    get:
+      tags: [accounts]
+      summary: 账户流水
+      parameters:
+        - in: path
+          name: account_id
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: items}
+  /accounts/{account_id}/disable:
+    post:
+      tags: [accounts]
+      summary: 停用账户
+      parameters:
+        - in: path
+          name: account_id
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: ok}
+  /accounts/{account_id}/enable:
+    post:
+      tags: [accounts]
+      summary: 启用账户
+      parameters:
+        - in: path
+          name: account_id
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: ok}
   /entries:
     get:
-      summary: 流水（支持 limit/offset）
+      tags: [journals]
+      summary: 流水（limit/offset；from/to 为 RFC3339）
       parameters:
         - in: query
           name: holder_id
-          schema: { type: string }
+          schema: {type: string}
         - in: query
           name: biz_no
-          schema: { type: string }
+          schema: {type: string}
         - in: query
           name: limit
-          schema: { type: integer }
+          schema: {type: integer, default: 50, maximum: 200}
         - in: query
           name: offset
-          schema: { type: integer }
+          schema: {type: integer, default: 0}
+        - in: query
+          name: from
+          schema: {type: string, format: date-time}
+        - in: query
+          name: to
+          schema: {type: string, format: date-time}
       responses:
-        "200":
-          description: items 分页
+        "200": {description: items 分页}
+        "400": {$ref: "#/components/responses/Error"}
   /freezes:
     get:
+      tags: [freezes]
       summary: 按 biz_no 查单条，或按 holder_id 列冻结单
       parameters:
         - in: query
           name: holder_id
-          schema: { type: string }
+          schema: {type: string}
         - in: query
           name: biz_no
-          schema: { type: string }
+          schema: {type: string}
+        - in: query
+          name: status
+          schema: {type: string}
       responses:
-        "200":
-          description: 冻结单
+        "200": {description: 冻结单}
+  /freezes/{freeze_id}:
+    get:
+      tags: [freezes]
+      summary: 按 ID 查冻结单
+      parameters:
+        - in: path
+          name: freeze_id
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: 冻结单}
+        "404": {$ref: "#/components/responses/Error"}
   /journals/{id}:
     get:
+      tags: [journals]
       summary: Journal 及分录
       parameters:
         - in: path
           name: id
           required: true
-          schema: { type: string }
+          schema: {type: string}
       responses:
-        "200":
-          description: journal + entries
+        "200": {description: journal + entries}
+        "404": {$ref: "#/components/responses/Error"}
+  /fx/rates:
+    get:
+      tags: [fx]
+      summary: 汇率列表或按 base/quote 取快照
+      parameters:
+        - in: query
+          name: base
+          schema: {type: string}
+        - in: query
+          name: quote
+          schema: {type: string}
+      responses:
+        "200": {description: 汇率}
+    post:
+      tags: [fx]
+      summary: 登记汇率快照
+      responses:
+        "200": {description: ok}
+  /fx/rates/{rate_id}:
+    get:
+      tags: [fx]
+      summary: 按 ID 取汇率
+      parameters:
+        - in: path
+          name: rate_id
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: 汇率}
+  /tenants:
+    get:
+      tags: [tenants]
+      summary: 租户列表
+      responses:
+        "200": {description: 列表}
+    post:
+      tags: [tenants]
+      summary: 保存租户
+      responses:
+        "200": {description: ok}
+  /tenants/{id}:
+    get:
+      tags: [tenants]
+      summary: 租户详情
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: 租户}
+  /tenants/{id}/disable:
+    post:
+      tags: [tenants]
+      summary: 停用租户
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: ok}
+  /tenants/{id}/enable:
+    post:
+      tags: [tenants]
+      summary: 启用租户
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: ok}
+  /reconcile/jobs:
+    get:
+      tags: [reconcile]
+      summary: 对账任务列表
+      parameters:
+        - in: query
+          name: limit
+          schema: {type: integer}
+      responses:
+        "200": {description: 任务列表}
+    post:
+      tags: [reconcile]
+      summary: 异步入队对账（立即 202）
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                date: {type: string, example: "2026-08-16"}
+                source_system: {type: string}
+                asset_code: {type: string}
+                job_type: {type: string, example: daily}
+                force_new_version: {type: boolean}
+                biz_lines:
+                  type: array
+                  items: {$ref: "#/components/schemas/BizLine"}
+                channel_lines:
+                  type: array
+                  items: {$ref: "#/components/schemas/BizLine"}
+      responses:
+        "202":
+          description: 已入队
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Envelope"}
+              example: {code: 0, data: {job_id: rj_xxx, status: queued, version: 1}}
+  /reconcile/jobs/{id}:
+    get:
+      tags: [reconcile]
+      summary: 任务详情（status/phase/note/summary）
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: job + diffs}
+        "404": {$ref: "#/components/responses/Error"}
+  /reconcile/jobs/{id}/rerun:
+    post:
+      tags: [reconcile]
+      summary: 强制新版本入队
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      responses:
+        "202": {description: 新 job_id + version}
+  /reconcile/reports/{date}:
+    get:
+      tags: [reconcile]
+      summary: 按日报告
+      parameters:
+        - in: path
+          name: date
+          required: true
+          schema: {type: string}
+        - in: query
+          name: source_system
+          schema: {type: string}
+        - in: query
+          name: asset_code
+          schema: {type: string}
+      responses:
+        "200": {description: 报告}
+  /reconcile/files:
+    get:
+      tags: [reconcile]
+      summary: 对账文件列表
+      responses:
+        "200": {description: 文件}
+  /reconcile/files/{name}:
+    get:
+      tags: [reconcile]
+      summary: 下载对账文件（需 console/auth；下载记审计）
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: {type: string}
+        - in: query
+          name: exp
+          schema: {type: string}
+          description: 可选过期时间，当前实现以网关鉴权为准
+      responses:
+        "200": {description: 附件}
+  /reconcile/diffs:
+    get:
+      tags: [reconcile]
+      summary: 待关闭差异
+      parameters:
+        - in: query
+          name: limit
+          schema: {type: integer}
+      responses:
+        "200": {description: open diffs}
+  /reconcile/diffs/{id}/resolve:
+    post:
+      tags: [reconcile]
+      summary: 关闭差异（记录 closer + closed_at）
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: {type: string}
+      responses:
+        "200": {description: resolved}
+  /reconcile/diffs/{id}/assign:
+    post:
+      tags: [reconcile]
+      summary: 指派差异
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                assignee: {type: string}
+                note: {type: string}
+      responses:
+        "200": {description: assigned}
+  /reconcile/diffs/{id}/events:
+    get:
+      tags: [reconcile]
+      summary: 差异审计事件
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: events}
+  /ops/reload:
+    post:
+      tags: [ops]
+      summary: 重载 ACL/限额并写入配置版本
+      responses:
+        "200": {description: reloaded + revision}
+  /ops/config/revisions:
+    get:
+      tags: [ops]
+      summary: 配置版本列表
+      parameters:
+        - in: query
+          name: limit
+          schema: {type: integer}
+      responses:
+        "200": {description: revisions}
+  /ops/jobs:
+    get:
+      tags: [ops]
+      summary: 作业运行记录（含 last_success）
+      parameters:
+        - in: query
+          name: limit
+          schema: {type: integer}
+      responses:
+        "200": {description: items + last_success}
+  /ops/jobs/{name}:
+    post:
+      tags: [ops]
+      summary: 手动触发作业
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: {type: string, enum: [release_expired, reconcile, expire, fx_feed, idempotency, saga, queued-reconcile]}
+      responses:
+        "200": {description: OpsRun}
+  /ops/jobs/expire/preview:
+    get:
+      tags: [ops]
+      summary: 过期试算
+      parameters:
+        - in: query
+          name: as_of
+          schema: {type: string}
+      responses:
+        "200": {description: preview}
+  /ops/sagas:
+    get:
+      tags: [ops]
+      summary: 跨分片 Saga 列表
+      parameters:
+        - in: query
+          name: status
+          schema: {type: string}
+      responses:
+        "200": {description: sagas}
+  /ops/sagas/{id}/retry:
+    post:
+      tags: [ops]
+      summary: 人工续跑 Saga
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: saga}
+  /ops/sagas/{id}/compensate:
+    post:
+      tags: [ops]
+      summary: 人工补偿 Saga
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: string}
+      responses:
+        "200": {description: saga}
+  /ops/audits:
+    get:
+      tags: [ops]
+      summary: 网关审计
+      responses:
+        "200": {description: audits}
+  /ops/actions:
+    get:
+      tags: [ops]
+      summary: 运营操作审计
+      responses:
+        "200": {description: actions}
+  /ops/alerts:
+    get:
+      tags: [ops]
+      summary: 限额告警
+      responses:
+        "200": {description: alerts}
   /openapi.yaml:
     get:
       summary: OpenAPI 文档
       responses:
-        "200":
-          description: YAML
+        "200": {description: YAML}
+
 components:
+  responses:
+    Error:
+      description: 错误信封
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Envelope"}
+          example: {code: 40001, message: 金额必须为最小单位整数}
   schemas:
     Holder:
       type: object
       properties:
-        type: { type: string, example: user }
-        id: { type: string }
+        type: {type: string, example: user}
+        id: {type: string}
     Command:
       type: object
       required: [source_system, biz_no]
       properties:
-        command: { type: string }
-        tenant_id: { type: string }
-        source_system: { type: string }
-        biz_type: { type: string }
-        biz_no: { type: string }
-        holder: { $ref: "#/components/schemas/Holder" }
-        asset_code: { type: string }
-        amount: { type: string }
-        freeze_id: { type: string }
-        related_biz_no: { type: string }
-        to_holder: { $ref: "#/components/schemas/Holder" }
+        command: {type: string}
+        tenant_id: {type: string}
+        source_system: {type: string}
+        biz_type: {type: string}
+        biz_no: {type: string}
+        holder: {$ref: "#/components/schemas/Holder"}
+        asset_code: {type: string}
+        amount: {type: string, description: 最小单位整数}
+        freeze_id: {type: string}
+        related_biz_no: {type: string}
+        to_holder: {$ref: "#/components/schemas/Holder"}
         to:
           type: object
           properties:
-            asset_code: { type: string }
-            amount: { type: string }
+            asset_code: {type: string}
+            amount: {type: string}
+        from:
+          type: object
+          properties:
+            asset_code: {type: string}
+            amount: {type: string}
+        fee:
+          type: object
+          properties:
+            asset_code: {type: string}
+            amount: {type: string}
+        tolerance: {type: string}
     Envelope:
       type: object
       properties:
-        code: { type: integer }
-        message: { type: string }
-        data: { type: object }
+        code: {type: integer, example: 0}
+        message: {type: string}
+        data: {type: object}
     Account:
       type: object
       properties:
-        account_id: { type: string }
-        holder_id: { type: string }
-        asset_code: { type: string }
-        available: { type: string }
-        frozen: { type: string }
-        status: { type: string }
+        account_id: {type: string}
+        holder_id: {type: string}
+        asset_code: {type: string}
+        available: {type: string}
+        frozen: {type: string}
+        status: {type: string}
+    Asset:
+      type: object
+      properties:
+        asset_code: {type: string}
+        name: {type: string}
+        precision: {type: integer}
+        freeze_supported: {type: boolean}
     CommandResult:
       type: object
       properties:
-        accepted: { type: boolean }
-        journal_id: { type: string }
+        accepted: {type: boolean}
+        idempotent_replay: {type: boolean}
+        journal_id: {type: string}
+        freeze_id: {type: string}
         entry_ids:
           type: array
-          items: { type: string }
-        account: { $ref: "#/components/schemas/Account" }
+          items: {type: string}
+        account: {$ref: "#/components/schemas/Account"}
+    BizLine:
+      type: object
+      properties:
+        biz_no: {type: string}
+        command: {type: string}
+        asset_code: {type: string}
+        amount: {type: string}
+    ReconcileJob:
+      type: object
+      properties:
+        job_id: {type: string}
+        date: {type: string}
+        status: {type: string, enum: [queued, running, done, failed]}
+        version: {type: integer}
+        phase: {type: string}
+        note: {type: string}
+        summary: {type: object}

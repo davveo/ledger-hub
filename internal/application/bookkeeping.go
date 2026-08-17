@@ -92,7 +92,8 @@ func (s *Bookkeeping) Execute(ctx context.Context, req domain.CommandRequest) (*
 	}
 }
 
-type mutator func(ctx context.Context, s *Bookkeeping, req domain.CommandRequest, acc *domain.Account, asset *domain.Asset) (*domain.CommandResult, error)
+type mutator func(ctx context.Context, s *Bookkeeping,
+	req domain.CommandRequest, acc *domain.Account, asset *domain.Asset) (*domain.CommandResult, error)
 
 func (s *Bookkeeping) mutate(ctx context.Context, req domain.CommandRequest, fn mutator) (*domain.CommandResult, error) {
 	hash := requestHash(req)
@@ -142,7 +143,8 @@ func (s *Bookkeeping) mutate(ctx context.Context, req domain.CommandRequest, fn 
 	return result, err
 }
 
-func applyCredit(ctx context.Context, s *Bookkeeping, req domain.CommandRequest, acc *domain.Account, asset *domain.Asset) (*domain.CommandResult, error) {
+func applyCredit(ctx context.Context, s *Bookkeeping,
+	req domain.CommandRequest, acc *domain.Account, asset *domain.Asset) (*domain.CommandResult, error) {
 	if req.Amount <= 0 {
 		return nil, domain.ErrInvalidParam
 	}
@@ -171,7 +173,8 @@ func applyCredit(ctx context.Context, s *Bookkeeping, req domain.CommandRequest,
 	return newResult(acc, ids, "", journalID), nil
 }
 
-func applyDebit(ctx context.Context, s *Bookkeeping, req domain.CommandRequest, acc *domain.Account, asset *domain.Asset) (*domain.CommandResult, error) {
+func applyDebit(ctx context.Context, s *Bookkeeping,
+	req domain.CommandRequest, acc *domain.Account, asset *domain.Asset) (*domain.CommandResult, error) {
 	if req.Amount <= 0 {
 		return nil, domain.ErrInvalidParam
 	}
@@ -202,7 +205,8 @@ func applyDebit(ctx context.Context, s *Bookkeeping, req domain.CommandRequest, 
 	return newResult(acc, ids, "", journalID), nil
 }
 
-func applyFreeze(ctx context.Context, s *Bookkeeping, req domain.CommandRequest, acc *domain.Account, asset *domain.Asset) (*domain.CommandResult, error) {
+func applyFreeze(ctx context.Context, s *Bookkeeping,
+	req domain.CommandRequest, acc *domain.Account, asset *domain.Asset) (*domain.CommandResult, error) {
 	if req.Amount <= 0 {
 		return nil, domain.ErrInvalidParam
 	}
@@ -280,7 +284,8 @@ func (s *Bookkeeping) resolveFreezeHolder(ctx context.Context, req *domain.Comma
 	return nil
 }
 
-func (s *Bookkeeping) captureOrRelease(ctx context.Context, req domain.CommandRequest, capture bool) (*domain.CommandResult, error) {
+func (s *Bookkeeping) captureOrRelease(ctx context.Context,
+	req domain.CommandRequest, capture bool) (*domain.CommandResult, error) {
 	hash := requestHash(req)
 	var result *domain.CommandResult
 	err := s.tx.WithinTx(ctx, func(ctx context.Context) error {
@@ -533,7 +538,8 @@ func (s *Bookkeeping) getOrOpenLocked(ctx context.Context, tenantID string, hold
 	return s.accs.GetForUpdate(ctx, tenantID, holder, assetCode)
 }
 
-func (s *Bookkeeping) postSystem(ctx context.Context, req domain.CommandRequest, systemID, assetCode string, dir domain.Direction, amount int64, journalID string) (string, error) {
+func (s *Bookkeeping) postSystem(ctx context.Context, req domain.CommandRequest,
+	systemID, assetCode string, dir domain.Direction, amount int64, journalID string) (string, error) {
 	acc, err := s.getOrOpenLocked(ctx, req.TenantID, domain.Holder{Type: domain.HolderSystemSubject, ID: systemID}, assetCode)
 	if err != nil {
 		return "", err
@@ -553,7 +559,8 @@ func (s *Bookkeeping) postSystem(ctx context.Context, req domain.CommandRequest,
 	return e.EntryID, nil
 }
 
-func (s *Bookkeeping) writeEntry(ctx context.Context, req domain.CommandRequest, acc *domain.Account, dir domain.Direction, amount int64, freezeID, journalID string) (*domain.LedgerEntry, error) {
+func (s *Bookkeeping) writeEntry(ctx context.Context, req domain.CommandRequest, acc *domain.Account,
+	dir domain.Direction, amount int64, freezeID, journalID string) (*domain.LedgerEntry, error) {
 	e := &domain.LedgerEntry{
 		EntryID:        idgen.New("le_"),
 		AccountID:      acc.AccountID,
@@ -579,7 +586,8 @@ func (s *Bookkeeping) writeEntry(ctx context.Context, req domain.CommandRequest,
 	return e, nil
 }
 
-func (s *Bookkeeping) checkIdempotency(ctx context.Context, req domain.CommandRequest, hash string) (*domain.CommandResult, error) {
+func (s *Bookkeeping) checkIdempotency(ctx context.Context,
+	req domain.CommandRequest, hash string) (*domain.CommandResult, error) {
 	rec, err := s.idem.Get(ctx, req.TenantID, req.SourceSystem, req.BizNo, req.Command)
 	if err != nil {
 		return nil, err
@@ -598,7 +606,8 @@ func (s *Bookkeeping) checkIdempotency(ctx context.Context, req domain.CommandRe
 	return &res, nil
 }
 
-func (s *Bookkeeping) saveIdempotency(ctx context.Context, req domain.CommandRequest, hash string, res *domain.CommandResult) error {
+func (s *Bookkeeping) saveIdempotency(ctx context.Context,
+	req domain.CommandRequest, hash string, res *domain.CommandResult) error {
 	raw, err := json.Marshal(res)
 	if err != nil {
 		return err
@@ -656,11 +665,11 @@ func requestHash(req domain.CommandRequest) string {
 
 func newResult(acc *domain.Account, entryIDs []string, freezeID, journalID string) *domain.CommandResult {
 	return &domain.CommandResult{
-		Accepted: true,
-		FreezeID: freezeID,
+		Accepted:  true,
+		FreezeID:  freezeID,
 		JournalID: journalID,
-		EntryIDs: entryIDs,
-		Account:  toBalance(acc),
+		EntryIDs:  entryIDs,
+		Account:   toBalance(acc),
 	}
 }
 

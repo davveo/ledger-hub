@@ -57,6 +57,11 @@ func AutoMigrate(db *gorm.DB) error {
 		&LedgerOpsRun{},
 		&LedgerTransferSaga{},
 		&LedgerGatewayNonce{},
+		&LedgerJobLease{},
+		&LedgerConfigRevision{},
+		&LedgerMQInbox{},
+		&LedgerSchemaMigration{},
+		&LedgerReconcileDiffEvent{},
 	)
 	if err != nil {
 		return err
@@ -146,6 +151,9 @@ type Repos struct {
 	OpsRun      domain.OpsRunRepository
 	Saga        domain.SagaRepository
 	Nonce       domain.NonceRepository
+	Lease       domain.JobLeaseRepository
+	ConfigRev   domain.ConfigRevisionRepository
+	Inbox       domain.InboxRepository
 }
 
 func NewRepos(db *gorm.DB) *Repos {
@@ -167,6 +175,9 @@ func NewRepos(db *gorm.DB) *Repos {
 		OpsRun:      NewOpsRunRepo(db),
 		Saga:        NewSagaRepo(db),
 		Nonce:       NewNonceRepo(db),
+		Lease:       NewLeaseRepo(db),
+		ConfigRev:   NewConfigRevisionRepo(db),
+		Inbox:       NewInboxRepo(db),
 	}
 }
 
@@ -190,6 +201,9 @@ func NewClusterRepos(c *Cluster) *Repos {
 		OpsRun:      NewOpsRunRepo(primary),
 		Saga:        NewSagaRepo(primary),
 		Nonce:       NewNonceRepo(primary),
+		Lease:       NewLeaseRepo(primary),
+		ConfigRev:   NewConfigRevisionRepo(primary),
+		Inbox:       NewInboxRepo(primary),
 	}
 }
 

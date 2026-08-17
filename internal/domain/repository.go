@@ -51,11 +51,17 @@ type ReconcileRepository interface {
 	UpdateJob(ctx context.Context, job *ReconcileJob) error
 	GetJob(ctx context.Context, jobID string) (*ReconcileJob, error)
 	ListJobs(ctx context.Context, tenantID string, limit int) ([]*ReconcileJob, error)
+	ListQueuedJobs(ctx context.Context, limit int) ([]*ReconcileJob, error)
 	LatestJob(ctx context.Context, tenantID, date, sourceSystem, assetCode string) (*ReconcileJob, error)
+	FindJobByKey(ctx context.Context, tenantID, date, sourceSystem, assetCode, jobType string) (*ReconcileJob, error)
 	CreateDiffs(ctx context.Context, diffs []*ReconcileDiff) error
 	ListDiffs(ctx context.Context, jobID string) ([]*ReconcileDiff, error)
 	ListOpenDiffs(ctx context.Context, tenantID string, limit int) ([]*ReconcileDiff, error)
+	GetDiff(ctx context.Context, diffID string) (*ReconcileDiff, error)
+	UpdateDiff(ctx context.Context, d *ReconcileDiff) error
 	ResolveDiff(ctx context.Context, diffID, note, operator string) error
+	CreateDiffEvent(ctx context.Context, ev *ReconcileDiffEvent) error
+	ListDiffEvents(ctx context.Context, diffID string) ([]*ReconcileDiffEvent, error)
 }
 
 type IdempotencyRepository interface {
@@ -82,6 +88,26 @@ type OpsAuditRepository interface {
 type OpsRunRepository interface {
 	Save(ctx context.Context, run *OpsRun) error
 	List(ctx context.Context, limit int) ([]*OpsRun, error)
+	LastSuccess(ctx context.Context) (map[string]time.Time, error)
+}
+
+type JobLeaseRepository interface {
+	Acquire(ctx context.Context, jobName, holder string, ttl time.Duration) (bool, error)
+	Renew(ctx context.Context, jobName, holder string, ttl time.Duration) (bool, error)
+}
+
+type ConfigRevisionRepository interface {
+	Create(ctx context.Context, r *ConfigRevision) error
+	List(ctx context.Context, limit int) ([]*ConfigRevision, error)
+	Latest(ctx context.Context) (*ConfigRevision, error)
+}
+
+type InboxRepository interface {
+	InsertIfAbsent(ctx context.Context, m *InboxMessage) (inserted bool, err error)
+	Get(ctx context.Context, messageID string) (*InboxMessage, error)
+	Update(ctx context.Context, m *InboxMessage) error
+	List(ctx context.Context, status string, limit int) ([]*InboxMessage, error)
+	ListDue(ctx context.Context, now time.Time, limit int) ([]*InboxMessage, error)
 }
 
 type JournalRepository interface {

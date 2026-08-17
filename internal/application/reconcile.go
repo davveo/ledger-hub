@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -50,33 +51,132 @@ type ReconcileReport struct {
 	Files         map[string]string       `json:"files"`
 }
 
-func (s *ReconcileService) Trigger(ctx context.Context, tenantID, date, sourceSystem, assetCode string, bizLines, channelLines []domain.BizLine) (*ReconcileReport, error) {
+type reconPayload struct {
+	BizLines     []domain.BizLine `json:"biz_lines,omitempty"`
+	ChannelLines []domain.BizLine `json:"channel_lines,omitempty"`
+}
+
+func reconKey(source, asset, jobType string) (string, string, string) {
+	if jobType == "" {
+		jobType = domain.ReconJobTypeDaily
+	}
+	return source, asset, jobType
+}
+
+func reconReusable(status string) bool {
+	return status == domain.ReconJobQueued || status == domain.ReconJobRunning || status == domain.ReconJobDone
+}
+
+func (s *ReconcileService) Enqueue(ctx context.Context, tenantID, date, sourceSystem, assetCode, jobType string, forceNew bool, bizLines, channelLines []domain.BizLine) (*domain.ReconcileJob, error) {
 	if tenantID == "" || date == "" {
 		return nil, domain.ErrInvalidParam
 	}
-	day, err := time.Parse("2006-01-02", date)
-	if err != nil {
+	if _, err := time.Parse("2006-01-02", date); err != nil {
 		return nil, domain.NewError(domain.CodeInvalidParam, "date 需为 YYYY-MM-DD")
 	}
-	from := day.UTC()
-	to := from.Add(24 * time.Hour)
-
+	sourceSystem, assetCode, jobType = reconKey(sourceSystem, assetCode, jobType)
+	latest, err := s.store.FindJobByKey(ctx, tenantID, date, sourceSystem, assetCode, jobType)
+	if err != nil && !domain.Is(err, domain.CodeNotFound) {
+		return nil, err
+	}
+	version := 1
+	if latest != nil {
+		if !forceNew && reconReusable(latest.Status) {
+			return latest, nil
+		}
+		version = latest.Version + 1
+	}
+	payload, _ := json.Marshal(reconPayload{BizLines: bizLines, ChannelLines: channelLines})
 	job := &domain.ReconcileJob{
 		JobID:        idgen.New("rj_"),
 		TenantID:     tenantID,
 		Date:         date,
 		SourceSystem: sourceSystem,
 		AssetCode:    assetCode,
-		Status:       domain.ReconJobRunning,
+		JobType:      jobType,
+		Version:      version,
+		Status:       domain.ReconJobQueued,
+		Phase:        "queued",
+		PayloadJSON:  string(payload),
 		CreatedAt:    time.Now().UTC(),
 	}
 	if err := s.store.CreateJob(ctx, job); err != nil {
 		return nil, err
 	}
+	return job, nil
+}
 
-	entries, err := s.entries.ListByRange(ctx, tenantID, sourceSystem, assetCode, from, to)
+func (s *ReconcileService) DrainQueued(ctx context.Context, limit int) (int, error) {
+	if s == nil || s.store == nil {
+		return 0, nil
+	}
+	list, err := s.store.ListQueuedJobs(ctx, limit)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, job := range list {
+		if _, err := s.RunJob(ctx, job.JobID); err != nil {
+			return n, err
+		}
+		n++
+	}
+	return n, nil
+}
+
+func (s *ReconcileService) Rerun(ctx context.Context, tenantID, jobID string) (*domain.ReconcileJob, error) {
+	job, err := s.store.GetJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tenantMatch(job.TenantID, tenantID); err != nil {
+		return nil, err
+	}
+	var p reconPayload
+	_ = json.Unmarshal([]byte(job.PayloadJSON), &p)
+	return s.Enqueue(ctx, job.TenantID, job.Date, job.SourceSystem, job.AssetCode, job.JobType, true, p.BizLines, p.ChannelLines)
+}
+
+func (s *ReconcileService) Trigger(ctx context.Context, tenantID, date, sourceSystem, assetCode string, bizLines, channelLines []domain.BizLine) (*ReconcileReport, error) {
+	job, err := s.Enqueue(ctx, tenantID, date, sourceSystem, assetCode, domain.ReconJobTypeDaily, false, bizLines, channelLines)
+	if err != nil {
+		return nil, err
+	}
+	if job.Status == domain.ReconJobDone || job.Status == domain.ReconJobRunning {
+		return s.GetJob(ctx, tenantID, job.JobID)
+	}
+	return s.RunJob(ctx, job.JobID)
+}
+
+func (s *ReconcileService) RunJob(ctx context.Context, jobID string) (*ReconcileReport, error) {
+	job, err := s.store.GetJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if job.Status == domain.ReconJobDone {
+		return s.GetJob(ctx, job.TenantID, job.JobID)
+	}
+	var p reconPayload
+	_ = json.Unmarshal([]byte(job.PayloadJSON), &p)
+	day, err := time.Parse("2006-01-02", job.Date)
 	if err != nil {
 		job.Status = domain.ReconJobFailed
+		job.Note = "date 需为 YYYY-MM-DD"
+		_ = s.store.UpdateJob(ctx, job)
+		return nil, domain.NewError(domain.CodeInvalidParam, "date 需为 YYYY-MM-DD")
+	}
+	from := day.UTC()
+	to := from.Add(24 * time.Hour)
+	job.Status = domain.ReconJobRunning
+	job.Phase = "matching"
+	if err := s.store.UpdateJob(ctx, job); err != nil {
+		return nil, err
+	}
+
+	entries, err := s.entries.ListByRange(ctx, job.TenantID, job.SourceSystem, job.AssetCode, from, to)
+	if err != nil {
+		job.Status = domain.ReconJobFailed
+		job.Phase = "failed"
 		job.Note = err.Error()
 		_ = s.store.UpdateJob(ctx, job)
 		return nil, err
@@ -91,10 +191,11 @@ func (s *ReconcileService) Trigger(ctx context.Context, tenantID, date, sourceSy
 		}
 	}
 
-	diffs := MatchBizLines(job.JobID, bizLines, entries)
-	l2, err := s.balanceTieOut(ctx, tenantID, assetCode, entries)
+	diffs := MatchBizLines(job.JobID, p.BizLines, entries)
+	l2, err := s.balanceTieOut(ctx, job.TenantID, job.AssetCode, entries)
 	if err != nil {
 		job.Status = domain.ReconJobFailed
+		job.Phase = "failed"
 		job.Note = err.Error()
 		_ = s.store.UpdateJob(ctx, job)
 		return nil, err
@@ -104,9 +205,10 @@ func (s *ReconcileService) Trigger(ctx context.Context, tenantID, date, sourceSy
 	}
 	diffs = append(diffs, l2...)
 
-	l3, err := s.freezeTieOut(ctx, tenantID, assetCode)
+	l3, err := s.freezeTieOut(ctx, job.TenantID, job.AssetCode)
 	if err != nil {
 		job.Status = domain.ReconJobFailed
+		job.Phase = "failed"
 		job.Note = err.Error()
 		_ = s.store.UpdateJob(ctx, job)
 		return nil, err
@@ -116,24 +218,25 @@ func (s *ReconcileService) Trigger(ctx context.Context, tenantID, date, sourceSy
 	}
 	diffs = append(diffs, l3...)
 
-	if lPend := s.pendingSettlementTieOut(ctx, tenantID, assetCode); len(lPend) > 0 {
+	if lPend := s.pendingSettlementTieOut(ctx, job.TenantID, job.AssetCode); len(lPend) > 0 {
 		for i := range lPend {
 			lPend[i].JobID = job.JobID
 		}
 		diffs = append(diffs, lPend...)
 	}
 
-	l4 := s.fxTieOut(ctx, tenantID, entries)
+	l4 := s.fxTieOut(ctx, job.TenantID, entries)
 	for i := range l4 {
 		l4[i].JobID = job.JobID
 	}
 	diffs = append(diffs, l4...)
 
-	l5 := MatchChannelLines(job.JobID, channelLines, entries)
+	l5 := MatchChannelLines(job.JobID, p.ChannelLines, entries)
 	diffs = append(diffs, l5...)
 
-	sum := summarize(len(entries), len(bizLines), diffs, inAmt, outAmt)
+	sum := summarize(len(entries), len(p.BizLines), diffs, inAmt, outAmt)
 	job.Status = domain.ReconJobDone
+	job.Phase = "done"
 	job.Summary = sum
 	if err := s.store.UpdateJob(ctx, job); err != nil {
 		return nil, err
@@ -142,23 +245,23 @@ func (s *ReconcileService) Trigger(ctx context.Context, tenantID, date, sourceSy
 		return nil, err
 	}
 
-	sys := sourceSystem
+	sys := job.SourceSystem
 	if sys == "" {
 		sys = "all"
 	}
-	asset := assetCode
+	asset := job.AssetCode
 	if asset == "" {
 		asset = "all"
 	}
 	files := map[string]string{
-		"recon":           reconCSV(sys, asset, date, entries),
-		"diff":            diffCSV(sys, asset, date, diffs),
-		"balance_tie_out": kindCSV("balance_tie_out_"+sys+"_"+asset+"_"+date+".csv", domain.DiffBalanceTieOut, diffs),
-		"fx_journal":      fxJournalCSV(sys, asset, date, entries),
+		"recon":           reconCSV(sys, asset, job.Date, entries),
+		"diff":            diffCSV(sys, asset, job.Date, diffs),
+		"balance_tie_out": kindCSV("balance_tie_out_"+sys+"_"+asset+"_"+job.Date+".csv", domain.DiffBalanceTieOut, diffs),
+		"fx_journal":      fxJournalCSV(sys, asset, job.Date, entries),
 	}
-	if paths, err := s.writeReconcileFiles(date, sys, asset, files); err == nil {
-		for k, p := range paths {
-			files[k+"_path"] = p
+	if paths, err := s.writeReconcileFiles(job.Date, sys, asset, files); err == nil {
+		for k, pth := range paths {
+			files[k+"_path"] = pth
 		}
 	}
 	return &ReconcileReport{
@@ -211,29 +314,80 @@ func (s *ReconcileService) ListOpenDiffs(ctx context.Context, tenantID string, l
 }
 
 func (s *ReconcileService) ResolveDiff(ctx context.Context, tenantID, diffID, note, operator string) error {
-	if diffID == "" {
-		return domain.ErrInvalidParam
-	}
-	open, err := s.store.ListOpenDiffs(ctx, tenantID, 200)
+	d, err := s.diffInTenant(ctx, tenantID, diffID)
 	if err != nil {
 		return err
 	}
-	found := false
-	for _, d := range open {
-		if d.DiffID == diffID {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return domain.ErrNotFound
-	}
+	now := time.Now().UTC()
 	if operator != "" && note != "" {
-		note = operator + ": " + note
+		d.Note = operator + ": " + note
 	} else if operator != "" {
-		note = operator
+		d.Note = operator
+	} else {
+		d.Note = note
 	}
-	return s.store.ResolveDiff(ctx, diffID, note, operator)
+	d.Status = domain.DiffStatusResolved
+	d.ResolvedBy = operator
+	d.ClosedBy = operator
+	d.ClosedAt = &now
+	if err := s.store.UpdateDiff(ctx, d); err != nil {
+		return err
+	}
+	return s.store.CreateDiffEvent(ctx, &domain.ReconcileDiffEvent{
+		DiffID:   diffID,
+		Action:   "resolve",
+		Operator: operator,
+		Detail:   note,
+	})
+}
+
+func (s *ReconcileService) AssignDiff(ctx context.Context, tenantID, diffID, assignee, note, operator string) (*domain.ReconcileDiff, error) {
+	d, err := s.diffInTenant(ctx, tenantID, diffID)
+	if err != nil {
+		return nil, err
+	}
+	if assignee == "" {
+		return nil, domain.ErrInvalidParam
+	}
+	d.Assignee = assignee
+	if note != "" {
+		d.Note = note
+	}
+	if err := s.store.UpdateDiff(ctx, d); err != nil {
+		return nil, err
+	}
+	_ = s.store.CreateDiffEvent(ctx, &domain.ReconcileDiffEvent{
+		DiffID:   diffID,
+		Action:   "assign",
+		Operator: operator,
+		Detail:   assignee + " " + note,
+	})
+	return d, nil
+}
+
+func (s *ReconcileService) ListDiffEvents(ctx context.Context, tenantID, diffID string) ([]*domain.ReconcileDiffEvent, error) {
+	if _, err := s.diffInTenant(ctx, tenantID, diffID); err != nil {
+		return nil, err
+	}
+	return s.store.ListDiffEvents(ctx, diffID)
+}
+
+func (s *ReconcileService) diffInTenant(ctx context.Context, tenantID, diffID string) (*domain.ReconcileDiff, error) {
+	if diffID == "" {
+		return nil, domain.ErrInvalidParam
+	}
+	d, err := s.store.GetDiff(ctx, diffID)
+	if err != nil {
+		return nil, err
+	}
+	job, err := s.store.GetJob(ctx, d.JobID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tenantMatch(job.TenantID, tenantID); err != nil {
+		return nil, err
+	}
+	return d, nil
 }
 
 func MatchBizLines(jobID string, biz []domain.BizLine, entries []*domain.LedgerEntry) []*domain.ReconcileDiff {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -28,12 +29,12 @@ type AppConfig struct {
 }
 
 type HTTPConfig struct {
-	APIAddr          string        `mapstructure:"api_addr"`
-	GatewayAddr      string        `mapstructure:"gateway_addr"`
-	WorkerAddr       string        `mapstructure:"worker_addr"`
-	ReadTimeout      time.Duration `mapstructure:"read_timeout"`
-	WriteTimeout     time.Duration `mapstructure:"write_timeout"`
-	ShutdownTimeout  time.Duration `mapstructure:"shutdown_timeout"`
+	APIAddr         string        `mapstructure:"api_addr"`
+	GatewayAddr     string        `mapstructure:"gateway_addr"`
+	WorkerAddr      string        `mapstructure:"worker_addr"`
+	ReadTimeout     time.Duration `mapstructure:"read_timeout"`
+	WriteTimeout    time.Duration `mapstructure:"write_timeout"`
+	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
 }
 
 type MySQLConfig struct {
@@ -42,6 +43,7 @@ type MySQLConfig struct {
 	MaxIdleConns    int           `mapstructure:"max_idle_conns"`
 	MaxOpenConns    int           `mapstructure:"max_open_conns"`
 	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
+	AutoMigrate     bool          `mapstructure:"auto_migrate"`
 }
 
 type LogConfig struct {
@@ -60,12 +62,12 @@ type GatewayConfig struct {
 }
 
 type ClientAuth struct {
-	ClientID     string        `mapstructure:"client_id"`
-	Secret       string        `mapstructure:"secret"`
-	KeyVersion   string        `mapstructure:"key_version"`
-	Keys         []ClientKey   `mapstructure:"keys"`
-	RateLimitRPS int           `mapstructure:"rate_limit_rps"`
-	Tenants      []string      `mapstructure:"tenants"`
+	ClientID     string      `mapstructure:"client_id"`
+	Secret       string      `mapstructure:"secret"`
+	KeyVersion   string      `mapstructure:"key_version"`
+	Keys         []ClientKey `mapstructure:"keys"`
+	RateLimitRPS int         `mapstructure:"rate_limit_rps"`
+	Tenants      []string    `mapstructure:"tenants"`
 }
 
 type ClientKey struct {
@@ -85,21 +87,29 @@ type ACLRuleConfig struct {
 }
 
 type ConnectorConfig struct {
-	Addr          string `mapstructure:"addr"`
-	LedgerBaseURL string `mapstructure:"ledger_base_url"`
-	MQDir         string `mapstructure:"mq_dir"`
+	Addr          string        `mapstructure:"addr"`
+	LedgerBaseURL string        `mapstructure:"ledger_base_url"`
+	MQDir         string        `mapstructure:"mq_dir"`
 	MQInterval    time.Duration `mapstructure:"mq_interval"`
+	Kafka         KafkaConfig   `mapstructure:"kafka"`
+}
+
+type KafkaConfig struct {
+	Brokers []string `mapstructure:"brokers"`
+	Topic   string   `mapstructure:"topic"`
+	GroupID string   `mapstructure:"group_id"`
 }
 
 type WorkerConfig struct {
-	FreezeExpireInterval   time.Duration `mapstructure:"freeze_expire_interval"`
-	ReconcileInterval      time.Duration `mapstructure:"reconcile_interval"`
-	AssetExpireInterval    time.Duration `mapstructure:"asset_expire_interval"`
-	FxFeedInterval         time.Duration `mapstructure:"fx_feed_interval"`
-	IdempotencyInterval    time.Duration `mapstructure:"idempotency_interval"`
-	IdempotencyRetain      time.Duration `mapstructure:"idempotency_retain"`
-	SagaInterval           time.Duration `mapstructure:"saga_interval"`
-	FxFeed                 []FxFeedPair  `mapstructure:"fx_feed"`
+	FreezeExpireInterval time.Duration `mapstructure:"freeze_expire_interval"`
+	ReconcileInterval    time.Duration `mapstructure:"reconcile_interval"`
+	AssetExpireInterval  time.Duration `mapstructure:"asset_expire_interval"`
+	FxFeedInterval       time.Duration `mapstructure:"fx_feed_interval"`
+	IdempotencyInterval  time.Duration `mapstructure:"idempotency_interval"`
+	IdempotencyRetain    time.Duration `mapstructure:"idempotency_retain"`
+	SagaInterval         time.Duration `mapstructure:"saga_interval"`
+	LeaseTTL             time.Duration `mapstructure:"lease_ttl"`
+	FxFeed               []FxFeedPair  `mapstructure:"fx_feed"`
 }
 
 type FxFeedPair struct {
@@ -144,6 +154,9 @@ func Load(path string) (*Config, error) {
 	if err := v.Unmarshal(cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
+	if !v.IsSet("mysql.auto_migrate") {
+		cfg.MySQL.AutoMigrate = !IsProd(cfg.App.Env)
+	}
 	if cfg.App.DefaultTenant == "" {
 		cfg.App.DefaultTenant = "t_default"
 	}
@@ -159,13 +172,68 @@ func Load(path string) (*Config, error) {
 	if cfg.Worker.SagaInterval <= 0 {
 		cfg.Worker.SagaInterval = 15 * time.Second
 	}
+	if cfg.Worker.LeaseTTL <= 0 {
+		cfg.Worker.LeaseTTL = 30 * time.Second
+	}
 	if cfg.Connector.Addr == "" {
 		cfg.Connector.Addr = ":8090"
 	}
 	if cfg.Connector.LedgerBaseURL == "" {
 		cfg.Connector.LedgerBaseURL = "http://127.0.0.1:8088"
 	}
+	overlaySecrets(cfg)
 	return cfg, nil
+}
+
+func overlaySecrets(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	if v := os.Getenv("LEDGER_GATEWAY_CONSOLE_TOKEN"); v != "" {
+		cfg.Gateway.ConsoleToken = v
+	}
+	for i, cl := range cfg.Gateway.Clients {
+		key := clientSecretEnv(cl.ClientID)
+		if v := os.Getenv(key); v != "" {
+			cfg.Gateway.Clients[i].Secret = v
+		}
+	}
+}
+
+func clientSecretEnv(clientID string) string {
+	id := strings.ToUpper(strings.ReplaceAll(clientID, "-", "_"))
+	return "LEDGER_GATEWAY_CLIENT_" + id + "_SECRET"
+}
+
+func IsProd(env string) bool {
+	e := strings.ToLower(strings.TrimSpace(env))
+	return e == "prod" || e == "production"
+}
+
+func (c *Config) ValidateForEnv() error {
+	if c == nil {
+		return fmt.Errorf("config is nil")
+	}
+	if !IsProd(c.App.Env) {
+		return nil
+	}
+	token := strings.TrimSpace(c.Gateway.ConsoleToken)
+	if token == "" || token == "dev-console-token" {
+		return fmt.Errorf("production 拒绝默认或空的 console_token，请设置 LEDGER_GATEWAY_CONSOLE_TOKEN")
+	}
+	for _, cl := range c.Gateway.Clients {
+		sec := strings.TrimSpace(cl.Secret)
+		if sec == "" || strings.HasPrefix(sec, "dev-") {
+			return fmt.Errorf("production 拒绝空或 dev- 前缀的 client secret（client_id=%s），请设置 %s", cl.ClientID, clientSecretEnv(cl.ClientID))
+		}
+		for _, k := range cl.Keys {
+			ks := strings.TrimSpace(k.Secret)
+			if ks == "" || strings.HasPrefix(ks, "dev-") {
+				return fmt.Errorf("production 拒绝空或 dev- 前缀的 client key secret（client_id=%s）", cl.ClientID)
+			}
+		}
+	}
+	return nil
 }
 
 func MustLoad(path string) *Config {

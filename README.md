@@ -41,6 +41,7 @@
 | **API** | `cmd/api` | `:8080` | 账本 HTTP 内核：资产 / 账户 / 记账命令 / 流水查询 |
 | **Worker** | `cmd/worker` | `:8089` | 超时冻结自动释放、积分过期、日终 L2/L3/L4 对账 |
 | **Connector** | `cmd/connector` | `:8090` | 订单/支付样板：业务事件 → 标准命令 |
+| **Migrate** | `cmd/migrate` | — | 版本化 schema（`ledger-migrate`），生产替代进程内 AutoMigrate |
 
 进程内分层（均可被单独抽成服务）：
 
@@ -80,24 +81,29 @@ infrastructure       → GORM / MySQL / 日志，可替换存储
 
 ```text
 ledger-hub/
+├── api/                     # OpenAPI 1.2.0（embed）
 ├── cmd/
 │   ├── api/                 # 账本 HTTP 服务
 │   ├── gateway/             # API 网关
 │   ├── worker/              # 异步任务
-│   └── connector/           # 订单/支付样板接入
+│   ├── connector/           # 订单/支付样板接入
+│   └── migrate/             # ledger-migrate
 ├── configs/config.yaml
 ├── deployments/docker-compose.yaml
 ├── docs/architecture.html
+├── migrations/              # 版本化 SQL（baseline + P1 表）
 ├── internal/
 │   ├── application/         # 应用层（用例）
 │   ├── config/
+│   ├── connector/           # MQ inbox / Kafka 消费者插件
 │   ├── domain/              # 领域层（实体 / 仓储接口 / 错误码）
 │   ├── gateway/             # 网关实现
 │   ├── iface/http/          # 接口层 Gin
 │   ├── infrastructure/      # GORM / 日志 / ID
+│   ├── observability/       # 探针、Prometheus、OTel
 │   └── worker/
 ├── pkg/
-│   ├── client/              # Go SDK 雏形
+│   ├── client/              # Go SDK（Command / Exec / V2 签名）
 │   └── sign/                # HMAC 签名
 └── 通用账本中台技术方案.md
 ```
@@ -152,13 +158,14 @@ make build
 ./bin/ledger-worker -config configs/config.yaml
 ```
 
-健康检查：
+健康检查（`/healthz` 仍是存活别名；编排探针请用 `/livez`，就绪用 `/readyz`）：
 
 ```bash
-curl http://127.0.0.1:8080/healthz
-curl http://127.0.0.1:8088/healthz
-curl http://127.0.0.1:8089/healthz
-curl http://127.0.0.1:8090/healthz
+curl http://127.0.0.1:8080/livez
+curl http://127.0.0.1:8080/readyz   # API/Worker：ping MySQL 主库与分片，失败 503
+curl http://127.0.0.1:8088/readyz   # Gateway：短超时探测上游，约 5s 缓存
+curl http://127.0.0.1:8080/metrics  # Prometheus（API / Gateway / Worker）
+make migrate                        # 生产关闭 AutoMigrate 后先跑 ledger-migrate
 ```
 
 开发环境可直连 `:8080`；生产流量走 Gateway `:8088`（写请求需签名）。
@@ -257,13 +264,16 @@ GET  /api/v1/ledger/entries?holder_id=u_1&asset_code=POINT
 GET  /api/v1/ledger/journals/{id}
 GET  /api/v1/ledger/freezes/{freeze_id}
 GET  /api/v1/ledger/freezes?biz_no=order:O001
-POST /api/v1/ledger/reconcile/jobs
+POST /api/v1/ledger/reconcile/jobs          # 202 入队，不在 HTTP 内跑匹配
 GET  /api/v1/ledger/reconcile/jobs
 GET  /api/v1/ledger/reconcile/jobs/{id}
+POST /api/v1/ledger/reconcile/jobs/{id}/rerun
 GET  /api/v1/ledger/reconcile/reports/{date}?source_system=order&asset_code=POINT
 GET  /api/v1/ledger/reconcile/files
 GET  /api/v1/ledger/reconcile/files/{name}
+POST /api/v1/ledger/reconcile/diffs/{id}/assign
 POST /api/v1/ledger/reconcile/diffs/{id}/resolve
+GET  /api/v1/ledger/reconcile/diffs/{id}/events
 POST /api/v1/ledger/fx/rates
 GET  /api/v1/ledger/fx/rates
 GET  /api/v1/ledger/fx/rates/{rate_id}
@@ -272,7 +282,7 @@ GET  /api/v1/ledger/tenants
 GET  /console
 ```
 
-对账任务可附带业务侧应记账清单（L1）；即使不传 `biz_lines`，也会跑 L2 余额勾稽、L3 冻结勾稽与 L4 兑换完整性。
+`POST /reconcile/jobs` 立即 **202**（`job_id` / `status=queued` / `version`），由 Worker 领取执行。同一租户+日期+来源+资产默认复用已有 queued/running/done；`force_new_version` 或 rerun 升版本。任务可附带业务侧应记账清单（L1）；即使不传 `biz_lines`，也会跑 L2 余额勾稽、L3 冻结勾稽与 L4 兑换完整性。
 
 ```json
 {
@@ -330,7 +340,7 @@ campaign:signin:u123:20260814
 - 取消必须 `Release` 对应 freeze，禁止补偿式瞎加
 - 记账 API 只能业务后端调
 
-SDK 雏形：`pkg/client`（超时、签名、命令封装）。
+Go SDK：`pkg/client`（强类型 `Command` / `Exec`，`WithTimeout` / `WithRequestID`，V2 签名，502/503 有限重试）。
 
 ---
 
@@ -350,8 +360,12 @@ GORM AutoMigrate 创建以下表（金额一律 BIGINT 最小单位）：
 | `ledger_exchange_leg` | 兑换腿（from/to/fee/rate） |
 | `ledger_tenant` | 租户 |
 | `ledger_limit_usage` | 限额日累计 |
-| `ledger_reconcile_job` | 日终对账任务与汇总 |
+| `ledger_reconcile_job` | 日终对账任务与汇总；唯一键含 version |
 | `ledger_reconcile_diff` | 差异工单（多账/少账/金额/币种/勾稽/兑换不完整） |
+| `ledger_job_lease` | Worker 多副本任务租约 |
+| `ledger_mq_inbox` | Connector 消费幂等与重试 |
+| `ledger_config_revision` | ACL/限额热加载审计 |
+| `ledger_schema_migration` | 版本化 migration 记录 |
 
 样板资产：`POINT`、`BALANCE_CNY`、`BALANCE_USD`、`BALANCE_HKD`、`COIN`、`GROWTH`（API 启动时自动种子，已存在则跳过）。
 
@@ -369,13 +383,12 @@ GORM AutoMigrate 创建以下表（金额一律 BIGINT 最小单位）：
 
 ## 10. 配置
 
-见 `configs/config.yaml`。环境变量前缀 `LEDGER_`，层级用 `_` 替换，例如 `LEDGER_MYSQL_DSN`。
+见 `configs/config.yaml`。环境变量前缀 `LEDGER_`，层级用 `_` 替换，例如 `LEDGER_MYSQL_DSN`。yaml 加载后再 overlay 密钥：`LEDGER_GATEWAY_CONSOLE_TOKEN`、`LEDGER_GATEWAY_CLIENT_<CLIENTID>_SECRET`（CLIENTID 大写，连字符改下划线）。`app.env=prod` 时拒绝空/`dev-console-token`/空或 `dev-` 前缀 secret。本地/docker `mysql.auto_migrate: true`；生产请设 **false**，发布前跑 `make migrate`。Schema 变更按 **expand → migrate → contract**（新列先可空，回填后再加约束）。
 
-Gateway 写请求头：
+Gateway 写请求头（V2 默认）：
 
-- `X-Client-Id`
-- `X-Timestamp`（unix 秒）
-- `X-Signature` = `HMAC-SHA256(secret, client_id + timestamp + body)` hex
+- `X-Client-Id` / `X-Timestamp` / `X-Nonce` / `X-Sign-Version: v2` / `X-Signature`
+- `X-Request-Id`（推荐）、`traceparent`（W3C，Gateway 转发给上游）
 - 写请求 `source_system` 必须与 `X-Client-Id` 一致
 
 权限矩阵（`configs/config.yaml` → `acl.rules`，记账内核强制校验）：
@@ -388,7 +401,7 @@ wallet    → Credit / Debit / Freeze / Capture / Release / Transfer / Exchange 
 worker    → Release / Debit / Transfer / Reverse *
 ```
 
-运营台：浏览器打开 `http://127.0.0.1:8080/console`，或经网关 `http://127.0.0.1:8088/console`（需 `X-Console-Token`，默认 `dev-console-token`）。后台按模块管理资产、租户、账户启停、流水/冻结检索、冲正、汇率、日终对账与差异工单、ACL/限额热加载。API 启动时会幂等写入演示账（`u_alice` / `u_bob` / `m_shop` 等），金额均为最小单位、余额与流水自洽。OpenAPI：`GET /api/v1/ledger/openapi.yaml`。Gateway 写/读请求均需 HMAC，时间窗默认 300s。
+运营台：浏览器打开 `http://127.0.0.1:8080/console`，或经网关 `http://127.0.0.1:8088/console`（需请求头 `X-Console-Token`，**禁止** query）。后台按模块管理资产、租户、账户启停、流水/冻结检索、冲正、汇率、异步对账与差异工单、作业（实例/耗时/错误/最后成功）、ACL/限额热加载（配置版本）。API 启动时会幂等写入演示账（`u_alice` / `u_bob` / `m_shop` 等），金额均为最小单位、余额与流水自洽。OpenAPI：`GET /api/v1/ledger/openapi.yaml`（1.2.0）。Gateway 写/读请求均需 HMAC，时间窗默认 300s。`OTEL_EXPORTER_OTLP_ENDPOINT` 非空才导出 OTLP，否则仍传播 `traceparent`。
 
 分库：`mysql.shards` 配置额外 DSN；账户 / 流水 / 冻结 / 幂等按 `holder_id` 哈希路由。未配置时仍为单库。同 holder 的 Exchange 落在同一分片；跨 holder Transfer 若分片不同则经 `pending_settlement` 两段记账。
 
@@ -400,7 +413,7 @@ worker    → Release / Debit / Transfer / Reverse *
 
 ## 11. 订单 / 支付样板接入
 
-独立进程 `cmd/connector`（默认 `:8090`），把业务事件翻译成标准命令，经 Gateway 调账本。
+独立进程 `cmd/connector`（默认 `:8090`），把业务事件翻译成标准命令，经 Gateway 调账本。HTTP/文件先入 `ledger_mq_inbox`（`message_id` 幂等），失败可 replay；`connector.kafka.brokers` 非空时启用 Kafka 消费者。
 
 ```bash
 # 下单锁积分

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log"
 
@@ -11,6 +12,7 @@ import (
 	httpserver "github.com/davveo/ledger-hub/internal/iface/http"
 	"github.com/davveo/ledger-hub/internal/infrastructure/logger"
 	"github.com/davveo/ledger-hub/internal/infrastructure/persistence"
+	"github.com/davveo/ledger-hub/internal/observability"
 )
 
 func main() {
@@ -18,18 +20,25 @@ func main() {
 	flag.Parse()
 
 	cfg := config.MustLoad(*cfgPath)
+	if err := cfg.ValidateForEnv(); err != nil {
+		log.Fatal(err)
+	}
 	zapLog, err := logger.New(cfg.Log)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer zapLog.Sync()
+	stop := observability.InitTrace(context.Background(), "ledger-gateway")
+	defer stop()
 
 	gw, err := gateway.New(cfg.Gateway)
 	if err != nil {
 		zapLog.Fatal("init gateway", zap.Error(err))
 	}
 	if cluster, err := persistence.OpenCluster(cfg.MySQL); err == nil {
-		_ = cluster.AutoMigrate()
+		if cfg.MySQL.AutoMigrate {
+			_ = cluster.AutoMigrate()
+		}
 		gw.WithAudit(persistence.NewAuditRepo(cluster.Primary())).
 			WithNonce(persistence.NewNonceRepo(cluster.Primary()))
 	} else {
