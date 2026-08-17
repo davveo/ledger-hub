@@ -372,10 +372,10 @@ func setupBooks(t *testing.T) (*Bookkeeping, *mem) {
 		TenantID: "t_default", AssetCode: "POINT", Name: "积分", Status: domain.AssetActive, FreezeSupported: true,
 	})
 	acl := NewACL([]domain.ACLRule{
-		{SourceSystem: "campaign", Commands: []string{"Credit"}, Assets: []string{"POINT"}},
-		{SourceSystem: "order", Commands: []string{"Freeze", "Capture", "Release"}, Assets: []string{"POINT", "BALANCE_CNY"}},
-		{SourceSystem: "pay", Commands: []string{"Credit"}, Assets: []string{"BALANCE_CNY"}},
-		{SourceSystem: "wallet", Commands: []string{"Transfer", "Credit", "Debit", "Freeze", "Capture", "Release", "Exchange", "Reverse"}, Assets: []string{"POINT", "BALANCE_CNY", "BALANCE_USD"}},
+		{SourceSystem: "campaign", Commands: []string{"Credit"}, Assets: []string{"POINT", "COIN"}},
+		{SourceSystem: "order", Commands: []string{"Freeze", "Capture", "Release"}, Assets: []string{"POINT", "BALANCE_CNY", "BALANCE_USD", "BALANCE_HKD", "COIN", "VOUCHER"}},
+		{SourceSystem: "pay", Commands: []string{"Credit"}, Assets: []string{"BALANCE_CNY", "BALANCE_USD", "BALANCE_HKD"}},
+		{SourceSystem: "wallet", Commands: []string{"Transfer", "Credit", "Debit", "Freeze", "Capture", "Release", "Exchange", "Reverse"}, Assets: []string{"POINT", "BALANCE_CNY", "BALANCE_USD", "BALANCE_HKD", "COIN", "VOUCHER", "MILEAGE"}},
 		{SourceSystem: "worker", Commands: []string{"Release", "Debit", "Transfer", "Reverse"}, Assets: []string{"*"}},
 	})
 	b := NewBookkeeping(memTx{}, st, memAccount{st}, memEntry{st}, memFreeze{st}, memIdem{st}, acl)

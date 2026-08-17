@@ -35,32 +35,32 @@ gateway:
     - client_id: order
       secret: "dev-secret-order"
       rate_limit_rps: 80
-      tenants: [t_default, t_mall]
+      tenants: [t_default, t_mall, t_game]
     - client_id: pay
       secret: "dev-secret-pay"
       rate_limit_rps: 80
-      tenants: [t_default, t_mall]
+      tenants: [t_default, t_mall, t_game]
     - client_id: campaign
       secret: "dev-secret-campaign"
-      tenants: [t_default, t_mall]
+      tenants: [t_default, t_mall, t_game]
     - client_id: wallet
       secret: "dev-secret-wallet"
-      tenants: [t_default, t_mall]
+      tenants: [t_default, t_mall, t_game]
 
 acl:
   rules:
     - source_system: campaign
       commands: ["Credit"]
-      assets: ["POINT"]
+      assets: ["POINT", "COIN"]
     - source_system: order
       commands: ["Freeze", "Capture", "Release"]
-      assets: ["POINT", "BALANCE_CNY"]
+      assets: ["POINT", "BALANCE_CNY", "BALANCE_USD", "BALANCE_HKD", "COIN", "VOUCHER"]
     - source_system: pay
       commands: ["Credit"]
-      assets: ["BALANCE_CNY"]
+      assets: ["BALANCE_CNY", "BALANCE_USD", "BALANCE_HKD"]
     - source_system: wallet
       commands: ["Credit", "Debit", "Freeze", "Capture", "Release", "Transfer", "Exchange", "Reverse"]
-      assets: ["POINT", "BALANCE_CNY", "BALANCE_USD"]
+      assets: ["POINT", "BALANCE_CNY", "BALANCE_USD", "BALANCE_HKD", "COIN", "VOUCHER", "MILEAGE"]
     - source_system: worker
       commands: ["Release", "Debit", "Transfer", "Reverse"]
       assets: ["*"]

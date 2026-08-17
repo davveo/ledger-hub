@@ -190,6 +190,23 @@ func TestGatewayRejectConsoleQueryToken(t *testing.T) {
 	}
 }
 
+func TestGatewayRootRedirectsToConsole(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gw, err := New(config.GatewayConfig{Upstream: "http://127.0.0.1:8080", ConsoleToken: "tok"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	gw.Engine().ServeHTTP(w, req)
+	if w.Code != http.StatusFound {
+		t.Fatalf("status %d", w.Code)
+	}
+	if loc := w.Header().Get("Location"); loc != "/console" {
+		t.Fatalf("location %q", loc)
+	}
+}
+
 func TestGatewayTenantUnauthorized(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

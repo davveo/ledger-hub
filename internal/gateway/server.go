@@ -6,6 +6,7 @@ import (
 	"crypto/hmac"
 	"encoding/json"
 	"io"
+	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strconv"
@@ -63,6 +64,7 @@ func (s *Server) Engine() *gin.Engine {
 	}
 	observability.RegisterProbes(r, "ledger-gateway", readyFn)
 	r.GET("/metrics", observability.MetricsHandler())
+	r.GET("/", func(c *gin.Context) { c.Redirect(http.StatusFound, "/console") })
 	lim := newClientLimiter(s.cfg)
 	auth := s.auth()
 	audit := s.auditMW()

@@ -75,7 +75,83 @@ func TestSeedDemoBalances(t *testing.T) {
 		t.Fatalf("dormant %+v err=%v", dormant, err)
 	}
 	alerts := b.limiter.Alerts()
-	if len(alerts) == 0 || alerts[0].Reason == "" {
-		t.Fatalf("want limit alert, got %+v", alerts)
+	if len(alerts) < 2 {
+		t.Fatalf("want at least 2 limit alerts, got %+v", alerts)
+	}
+
+	coin, err := memAccount{st}.Get(ctx, "t_default", alice, "COIN")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if coin.Available != 6250 || coin.Frozen != 1500 {
+		t.Fatalf("alice COIN avail=%d frozen=%d", coin.Available, coin.Frozen)
+	}
+	voucher, err := memAccount{st}.Get(ctx, "t_default", alice, "VOUCHER")
+	if err != nil || voucher.Available != 30 {
+		t.Fatalf("alice VOUCHER %+v err=%v", voucher, err)
+	}
+
+	dave := domain.Holder{Type: domain.HolderUser, ID: "u_dave"}
+	dp, err := memAccount{st}.Get(ctx, "t_default", dave, "POINT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dp.Available != 3810 || dp.Frozen != 200 {
+		t.Fatalf("dave POINT avail=%d frozen=%d", dp.Available, dp.Frozen)
+	}
+	mile, err := memAccount{st}.Get(ctx, "t_default", dave, "MILEAGE")
+	if err != nil || mile.Available != 1200 {
+		t.Fatalf("dave MILEAGE %+v err=%v", mile, err)
+	}
+
+	eve := domain.Holder{Type: domain.HolderUser, ID: "u_eve"}
+	eveCNY, err := memAccount{st}.Get(ctx, "t_default", eve, "BALANCE_CNY")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eveCNY.Available != 69900 {
+		t.Fatalf("eve CNY avail=%d", eveCNY.Available)
+	}
+	eveHKD, err := memAccount{st}.Get(ctx, "t_default", eve, "BALANCE_HKD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eveHKD.Available != 80000 || eveHKD.Frozen != 28000 {
+		t.Fatalf("eve HKD avail=%d frozen=%d", eveHKD.Available, eveHKD.Frozen)
+	}
+
+	vip, err := memAccount{st}.Get(ctx, "t_default", domain.Holder{Type: domain.HolderUser, ID: "u_vip"}, "POINT")
+	if err != nil || vip.Available != 90 || vip.Frozen != 30 {
+		t.Fatalf("vip POINT %+v err=%v", vip, err)
+	}
+	frank, err := memAccount{st}.Get(ctx, "t_default", domain.Holder{Type: domain.HolderUser, ID: "u_frank"}, "POINT")
+	if err != nil || frank.Available != 300 {
+		t.Fatalf("frank POINT %+v err=%v", frank, err)
+	}
+	bobUSD, err := memAccount{st}.Get(ctx, "t_default", bob, "BALANCE_USD")
+	if err != nil || bobUSD.Available != 5000 {
+		t.Fatalf("bob USD %+v err=%v", bobUSD, err)
+	}
+	bobCoin, err := memAccount{st}.Get(ctx, "t_default", bob, "COIN")
+	if err != nil || bobCoin.Available != 200 {
+		t.Fatalf("bob COIN %+v err=%v", bobCoin, err)
+	}
+	cafe, err := memAccount{st}.Get(ctx, "t_default", domain.Holder{Type: domain.HolderMerchant, ID: "m_cafe"}, "BALANCE_CNY")
+	if err != nil || cafe.Available != 30000 {
+		t.Fatalf("cafe CNY %+v err=%v", cafe, err)
+	}
+	closed, err := memAccount{st}.Get(ctx, "t_default", domain.Holder{Type: domain.HolderUser, ID: "u_closed"}, "COIN")
+	if err != nil || closed.Status != domain.AccountDisabled || closed.Available != 10 {
+		t.Fatalf("closed %+v err=%v", closed, err)
+	}
+
+	buyer := domain.Holder{Type: domain.HolderUser, ID: "u_buyer"}
+	mall, err := memAccount{st}.Get(ctx, "t_mall", buyer, "POINT")
+	if err != nil || mall.Available != 1900 {
+		t.Fatalf("mall buyer POINT %+v err=%v", mall, err)
+	}
+	gamer, err := memAccount{st}.Get(ctx, "t_game", domain.Holder{Type: domain.HolderUser, ID: "u_gamer"}, "POINT")
+	if err != nil || gamer.Available != 11150 || gamer.Frozen != 800 {
+		t.Fatalf("gamer POINT %+v err=%v", gamer, err)
 	}
 }

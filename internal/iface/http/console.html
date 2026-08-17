@@ -104,7 +104,7 @@
       <div><h1>Ledger Hub</h1><p>运营后台</p></div>
     </div>
     <nav>
-      <a href="#/dashboard" data-page="dashboard">概览</a>
+      <a href="#/dashboard" data-page="dashboard">首页</a>
       <a href="#/assets" data-page="assets">资产</a>
       <a href="#/tenants" data-page="tenants">租户</a>
       <a href="#/accounts" data-page="accounts">账户</a>
@@ -119,7 +119,7 @@
   </aside>
   <section class="main">
     <header class="top">
-      <h2 id="title">概览</h2>
+      <h2 id="title">首页</h2>
       <select id="tenantSel" onchange="onTenant()"></select>
       <input id="operator" placeholder="操作人" style="min-width:120px"/>
       <input id="token" placeholder="Console Token" style="min-width:180px"/>
@@ -152,7 +152,7 @@
 const TOKEN_KEY = 'ledger_console_token';
 const TENANT_KEY = 'ledger_console_tenant';
 const OP_KEY = 'ledger_console_operator';
-const titles = {dashboard:'概览', assets:'资产', tenants:'租户', accounts:'账户', entries:'流水', freezes:'冻结单', fx:'汇率', reconcile:'对账', jobs:'作业', audit:'审计', risk:'风控'};
+const titles = {dashboard:'首页', assets:'资产', tenants:'租户', accounts:'账户', entries:'流水', freezes:'冻结单', fx:'汇率', reconcile:'对账', jobs:'作业', audit:'审计', risk:'风控'};
 let overview = {};
 let entryOffset = 0;
 const entryLimit = 50;
@@ -293,6 +293,7 @@ function showLogin() {
 function unlock() {
   localStorage.setItem(TOKEN_KEY, $('loginToken').value.trim());
   localStorage.setItem(OP_KEY, ($('loginOp') && $('loginOp').value.trim()) || 'console');
+  location.hash = '#/dashboard';
   boot();
 }
 function saveSession() {
@@ -327,7 +328,7 @@ function fillTenants(list) {
 function render() {
   const p = page();
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.dataset.page === p));
-  $('title').textContent = titles[p] || '概览';
+  $('title').textContent = titles[p] || '首页';
   const fn = ({dashboard: viewDash, assets: viewAssets, tenants: viewTenants, accounts: viewAccounts,
     entries: viewEntries, freezes: viewFreezes, fx: viewFx, reconcile: viewRecon, jobs: viewJobs,
     audit: viewAudit, risk: viewRisk})[p] || viewDash;
@@ -1055,7 +1056,7 @@ async function boot() {
     await loadOverview();
     $('login').classList.add('hidden');
     $('app').classList.remove('hidden');
-    if (!location.hash) location.hash = '#/dashboard';
+    if (!location.hash || !titles[page()]) location.hash = '#/dashboard';
     render();
   } catch (e) {
     showLogin();

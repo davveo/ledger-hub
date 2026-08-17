@@ -16,6 +16,8 @@ func SeedAssets(ctx context.Context, svc *AssetService, tenantID string) error {
 		{TenantID: tenantID, AssetCode: "BALANCE_USD", Name: "美元余额", AssetClass: "fiat", CurrencyCode: "USD", Precision: 2, FreezeSupported: true, Status: domain.AssetActive},
 		{TenantID: tenantID, AssetCode: "BALANCE_HKD", Name: "港币余额", AssetClass: "fiat", CurrencyCode: "HKD", Precision: 2, FreezeSupported: true, Status: domain.AssetActive},
 		{TenantID: tenantID, AssetCode: "COIN", Name: "金币", AssetClass: "token", Precision: 0, FreezeSupported: true, Status: domain.AssetActive},
+		{TenantID: tenantID, AssetCode: "VOUCHER", Name: "代金券", AssetClass: "coupon", Precision: 0, FreezeSupported: true, Status: domain.AssetActive},
+		{TenantID: tenantID, AssetCode: "MILEAGE", Name: "里程", AssetClass: "point", Precision: 0, FreezeSupported: false, Status: domain.AssetActive, Ext: `{"expire":{"policy":"rolling_days","days":365}}`},
 		{TenantID: tenantID, AssetCode: "GROWTH", Name: "成长值", AssetClass: "point", Precision: 0, Status: domain.AssetActive},
 	}
 	for _, a := range seeds {

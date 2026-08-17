@@ -79,6 +79,7 @@ func (s *Server) Engine() *gin.Engine {
 	r.Use(gin.Recovery(), requestID(), observability.EnsureTraceparent(), observability.GinTrace("ledger-api"), observability.HTTPMetrics(), observability.RequestLog(nil), accessLog())
 	observability.RegisterProbes(r, "ledger-api", observability.ClusterReady(s.cluster))
 	r.GET("/metrics", observability.MetricsHandler())
+	r.GET("/", func(c *gin.Context) { c.Redirect(http.StatusFound, "/console") })
 	r.GET("/console", s.consolePage)
 	g := r.Group("/api/v1/ledger")
 	{
