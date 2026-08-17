@@ -38,6 +38,9 @@ func Open(cfg config.MySQLConfig) (*gorm.DB, error) {
 }
 
 func AutoMigrate(db *gorm.DB) error {
+	if err := prepareReconcileJobUnique(db); err != nil {
+		return err
+	}
 	err := db.Set("gorm:table_options", "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4").AutoMigrate(
 		&LedgerAsset{},
 		&LedgerAccount{},
@@ -70,6 +73,65 @@ func AutoMigrate(db *gorm.DB) error {
 		_ = db.Exec("ALTER TABLE ledger_freeze DROP INDEX " + idx).Error
 	}
 	return nil
+}
+
+// prepareReconcileJobUnique backfills job_type/version and makes existing rows unique
+// so AutoMigrate can create uk_recon_job on databases that already have duplicate jobs.
+func prepareReconcileJobUnique(db *gorm.DB) error {
+	if db == nil || !db.Migrator().HasTable(&LedgerReconcileJob{}) {
+		return nil
+	}
+	if db.Migrator().HasIndex(&LedgerReconcileJob{}, "uk_recon_job") {
+		return nil
+	}
+	if !db.Migrator().HasColumn(&LedgerReconcileJob{}, "job_type") {
+		if err := db.Exec("ALTER TABLE ledger_reconcile_job ADD COLUMN job_type varchar(32) NOT NULL DEFAULT 'daily'").Error; err != nil {
+			return err
+		}
+	}
+	if !db.Migrator().HasColumn(&LedgerReconcileJob{}, "version") {
+		if err := db.Exec("ALTER TABLE ledger_reconcile_job ADD COLUMN version int NOT NULL DEFAULT 1").Error; err != nil {
+			return err
+		}
+	}
+	var rows []LedgerReconcileJob
+	if err := db.Order("created_at ASC, id ASC").Find(&rows).Error; err != nil {
+		return err
+	}
+	assigned := assignReconcileJobVersions(rows)
+	for i, row := range assigned {
+		if rows[i].JobType == row.JobType && rows[i].Version == row.Version {
+			continue
+		}
+		if err := db.Model(&LedgerReconcileJob{}).Where("id = ?", row.ID).Updates(map[string]interface{}{
+			"job_type": row.JobType,
+			"version":  row.Version,
+		}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type reconJobKey struct {
+	tenant, date, source, asset, jobType string
+}
+
+func assignReconcileJobVersions(rows []LedgerReconcileJob) []LedgerReconcileJob {
+	out := make([]LedgerReconcileJob, len(rows))
+	copy(out, rows)
+	counters := map[reconJobKey]int{}
+	for i := range out {
+		jt := out[i].JobType
+		if jt == "" {
+			jt = "daily"
+		}
+		k := reconJobKey{out[i].TenantID, out[i].BizDate, out[i].SourceSystem, out[i].AssetCode, jt}
+		counters[k]++
+		out[i].JobType = jt
+		out[i].Version = counters[k]
+	}
+	return out
 }
 
 type TxManager struct {
