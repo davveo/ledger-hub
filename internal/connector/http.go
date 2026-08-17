@@ -12,6 +12,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 
+	"github.com/davveo/ledger-hub/internal/domain"
+	"github.com/davveo/ledger-hub/internal/iface/errresp"
 	"github.com/davveo/ledger-hub/internal/observability"
 	"github.com/davveo/ledger-hub/pkg/client"
 )
@@ -43,12 +45,12 @@ func (h *HTTP) Engine() *gin.Engine {
 func (h *HTTP) handleOrder(c *gin.Context) {
 	var ev OrderEvent
 	if err := c.ShouldBindJSON(&ev); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": err.Error()})
+		errresp.Write(c, domain.Keyed(domain.CodeJSONInvalid, domain.KeyJSONInvalid))
 		return
 	}
 	raw, err := ApplyOrder(c.Request.Context(), h.orderCli, ev)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"code": 50200, "message": err.Error(), "data": json.RawMessage(raw)})
+		errresp.WriteWithData(c, domain.Keyed(domain.CodeUpstream, domain.KeyUpstream), json.RawMessage(raw))
 		return
 	}
 	c.Data(http.StatusOK, "application/json", raw)
@@ -57,12 +59,12 @@ func (h *HTTP) handleOrder(c *gin.Context) {
 func (h *HTTP) handlePay(c *gin.Context) {
 	var ev PayEvent
 	if err := c.ShouldBindJSON(&ev); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": err.Error()})
+		errresp.Write(c, domain.Keyed(domain.CodeJSONInvalid, domain.KeyJSONInvalid))
 		return
 	}
 	raw, err := ApplyPay(c.Request.Context(), h.payCli, ev)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"code": 50200, "message": err.Error(), "data": json.RawMessage(raw)})
+		errresp.WriteWithData(c, domain.Keyed(domain.CodeUpstream, domain.KeyUpstream), json.RawMessage(raw))
 		return
 	}
 	c.Data(http.StatusOK, "application/json", raw)
@@ -71,12 +73,12 @@ func (h *HTTP) handlePay(c *gin.Context) {
 func (h *HTTP) handleMQ(c *gin.Context) {
 	rawBody, err := c.GetRawData()
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": err.Error()})
+		errresp.Write(c, domain.Keyed(domain.CodeJSONInvalid, domain.KeyJSONInvalid))
 		return
 	}
 	var ev MQEvent
 	if err := json.Unmarshal(rawBody, &ev); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 40001, "message": err.Error()})
+		errresp.Write(c, domain.Keyed(domain.CodeJSONInvalid, domain.KeyJSONInvalid))
 		return
 	}
 	if ev.SchemaVersion == 0 {
@@ -88,7 +90,7 @@ func (h *HTTP) handleMQ(c *gin.Context) {
 	}
 	msg, err := h.proc.Ingest(c.Request.Context(), id, ev.Topic, ev.SchemaVersion, rawBody)
 	if err != nil && msg == nil {
-		c.JSON(http.StatusBadGateway, gin.H{"code": 50200, "message": err.Error()})
+		errresp.Write(c, err)
 		return
 	}
 	status := http.StatusOK
@@ -101,7 +103,7 @@ func (h *HTTP) handleMQ(c *gin.Context) {
 func (h *HTTP) listInbox(c *gin.Context) {
 	list, err := h.proc.Inbox().List(c.Request.Context(), c.Query("status"), 50)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 50000, "message": err.Error()})
+		errresp.Write(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"code": 0, "data": list})
@@ -110,7 +112,7 @@ func (h *HTTP) listInbox(c *gin.Context) {
 func (h *HTTP) replayInbox(c *gin.Context) {
 	msg, err := h.proc.Replay(c.Request.Context(), c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"code": 50200, "message": err.Error(), "data": msg})
+		errresp.WriteWithData(c, err, msg)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"code": 0, "data": msg})

@@ -93,7 +93,7 @@ func (s *Bookkeeping) CompensateSaga(ctx context.Context, sagaID string) (*domai
 		return nil, err
 	}
 	if sg.Status == domain.SagaCompleted {
-		return sg, domain.NewError(domain.CodeInvalidParam, "已完成的 Saga 不能补偿")
+		return sg, domain.Keyed(domain.CodeSagaAlreadyCompleted, domain.KeySagaAlreadyCompleted)
 	}
 	if sg.Status != domain.SagaFailed {
 		sg.Status = domain.SagaCompensating
@@ -162,7 +162,7 @@ func (s *Bookkeeping) resumeSaga(ctx context.Context, sg *domain.TransferSaga, r
 		}
 		return s.crossShardOnce(ctx, *req)
 	case domain.SagaFailed:
-		return nil, domain.NewError(domain.CodeInternal, "跨分片转账已失败: "+sg.LastError)
+		return nil, domain.Keyed(domain.CodeSagaFailed, domain.KeySagaFailed, sg.LastError)
 	case domain.SagaPending:
 		res, err := s.doSagaOut(ctx, sg, *req)
 		if err != nil {
@@ -195,9 +195,9 @@ func (s *Bookkeeping) resumeSaga(ctx context.Context, sg *domain.TransferSaga, r
 			_ = s.sagas.Update(ctx, sg)
 			return nil, err
 		}
-		return nil, domain.NewError(domain.CodeInternal, "跨分片转账已补偿: "+sg.LastError)
+		return nil, domain.Keyed(domain.CodeSagaCompensated, domain.KeySagaCompensated, sg.LastError)
 	default:
-		return nil, domain.NewError(domain.CodeInternal, "未知 Saga 状态")
+		return nil, domain.Keyed(domain.CodeUnknownSagaStatus, domain.KeyUnknownSagaStatus)
 	}
 }
 

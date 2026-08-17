@@ -13,14 +13,14 @@ func ExpectedToAmount(fromAmount int64, fromPrec, toPrec int, rate string) (int6
 	}
 	r := strings.TrimSpace(rate)
 	if r == "" {
-		return 0, domain.NewError(domain.CodeInvalidParam, "缺少汇率")
+		return 0, domain.Keyed(domain.CodeFxRateMissing, domain.KeyFxRateMissing)
 	}
 	from := new(big.Rat).SetInt64(fromAmount)
 	scaleFrom := new(big.Rat).SetInt64(pow10(fromPrec))
 	from.Quo(from, scaleFrom)
 	rv, ok := new(big.Rat).SetString(r)
 	if !ok {
-		return 0, domain.NewError(domain.CodeInvalidParam, "汇率格式错误")
+		return 0, domain.Keyed(domain.CodeFxRateFormat, domain.KeyFxRateFormat)
 	}
 	from.Mul(from, rv)
 	scaleTo := new(big.Rat).SetInt64(pow10(toPrec))

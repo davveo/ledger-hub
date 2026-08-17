@@ -6,7 +6,6 @@ import (
 	"crypto/hmac"
 	"encoding/json"
 	"io"
-	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strconv"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/davveo/ledger-hub/internal/config"
 	"github.com/davveo/ledger-hub/internal/domain"
+	"github.com/davveo/ledger-hub/internal/iface/errresp"
 	"github.com/davveo/ledger-hub/internal/observability"
 	"github.com/davveo/ledger-hub/pkg/sign"
 )
@@ -131,7 +131,7 @@ func (s *Server) auth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if s.cfg.ConsoleToken != "" {
 			if c.Query("console_token") != "" {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 40100, "message": "console_token 禁止出现在 query"})
+				errresp.Abort(c, domain.Keyed(domain.CodeConsoleTokenInQuery, domain.KeyConsoleTokenInQuery))
 				return
 			}
 			tok := c.GetHeader("X-Console-Token")
@@ -147,16 +147,16 @@ func (s *Server) auth() gin.HandlerFunc {
 		sig := c.GetHeader("X-Signature")
 		ck, ok := clients[clientID]
 		if !ok || clientID == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 40100, "message": "未知 client_id"})
+			errresp.Abort(c, domain.Keyed(domain.CodeUnknownClient, domain.KeyUnknownClient))
 			return
 		}
 		if sig == "" || ts == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 40100, "message": "缺少签名"})
+			errresp.Abort(c, domain.Keyed(domain.CodeMissingSignature, domain.KeyMissingSignature))
 			return
 		}
 		unix, err := strconv.ParseInt(ts, 10, 64)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 40100, "message": "时间戳无效"})
+			errresp.Abort(c, domain.Keyed(domain.CodeTimestampInvalid, domain.KeyTimestampInvalid))
 			return
 		}
 		skew := time.Since(time.Unix(unix, 0))
@@ -164,7 +164,7 @@ func (s *Server) auth() gin.HandlerFunc {
 			skew = -skew
 		}
 		if skew > s.maxSkew() {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 40100, "message": "时间戳超出允许窗口"})
+			errresp.Abort(c, domain.Keyed(domain.CodeTimestampSkew, domain.KeyTimestampSkew))
 			return
 		}
 		body, _ := io.ReadAll(c.Request.Body)
@@ -178,12 +178,12 @@ func (s *Server) auth() gin.HandlerFunc {
 			}
 			if json.Unmarshal(body, &peek) == nil {
 				if peek.SourceSystem != "" && peek.SourceSystem != clientID {
-					c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": domain.CodeForbidden, "message": "source_system 必须与 client_id 一致"})
+					errresp.Abort(c, domain.Keyed(domain.CodeSourceSystemMismatch, domain.KeySourceSystemMismatch))
 					return
 				}
 				if peek.TenantID != "" {
 					if tenant != "" && tenant != peek.TenantID {
-						c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": domain.CodeForbidden, "message": "租户与请求体不一致"})
+						errresp.Abort(c, domain.Keyed(domain.CodeTenantHeaderMismatch, domain.KeyTenantHeaderMismatch))
 						return
 					}
 					if tenant == "" {
@@ -196,7 +196,7 @@ func (s *Server) auth() gin.HandlerFunc {
 			tenant = s.cfg.DefaultTenant
 		}
 		if !tenantAllowed(ck.tenants, tenant) {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": domain.CodeForbidden, "message": "client 无权访问该租户"})
+			errresp.Abort(c, domain.Keyed(domain.CodeTenantNotAllowed, domain.KeyTenantNotAllowed))
 			return
 		}
 
@@ -206,7 +206,7 @@ func (s *Server) auth() gin.HandlerFunc {
 		}
 		secret := ck.keys[keyVer]
 		if secret == "" {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 40100, "message": "未知密钥版本"})
+			errresp.Abort(c, domain.Keyed(domain.CodeUnknownKeyVersion, domain.KeyUnknownKeyVersion))
 			return
 		}
 
@@ -219,13 +219,13 @@ func (s *Server) auth() gin.HandlerFunc {
 			ver = sign.VersionV1
 		}
 		if !accept[ver] {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 40100, "message": "不支持的签名版本"})
+			errresp.Abort(c, domain.Keyed(domain.CodeSignVersionUnsupported, domain.KeySignVersionUnsupported))
 			return
 		}
 		var expect string
 		if ver == sign.VersionV2 {
 			if nonce == "" {
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 40100, "message": "V2 签名需要 nonce"})
+				errresp.Abort(c, domain.Keyed(domain.CodeNonceRequired, domain.KeyNonceRequired))
 				return
 			}
 			expect = sign.HMACV2(secret, clientID, c.Request.Method, c.Request.URL.Path, c.Request.URL.RawQuery, tenant, ts, nonce, body)
@@ -233,16 +233,12 @@ func (s *Server) auth() gin.HandlerFunc {
 			expect = sign.HMACSHA256(clientID, secret, ts, body)
 		}
 		if !hmac.Equal([]byte(expect), []byte(sig)) {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 40100, "message": "签名校验失败"})
+			errresp.Abort(c, domain.Keyed(domain.CodeSignatureMismatch, domain.KeySignatureMismatch))
 			return
 		}
 		if ver == sign.VersionV2 && s.nonce != nil {
 			if err := s.nonce.Consume(c.Request.Context(), clientID, nonce, s.maxSkew()); err != nil {
-				code := domain.CodeUnauthorized
-				if domain.Is(err, domain.CodeReplay) {
-					code = domain.CodeReplay
-				}
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": code, "message": err.Error()})
+				errresp.Abort(c, domain.AsError(err))
 				return
 			}
 		}
@@ -322,10 +318,7 @@ func (l *clientLimiter) Handle() gin.HandlerFunc {
 		}
 		l.mu.Unlock()
 		if lim.over() {
-			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"code":    domain.CodeRateLimited,
-				"message": domain.ErrRateLimited.Message,
-			})
+			errresp.Abort(c, domain.ErrRateLimited)
 			return
 		}
 		c.Next()

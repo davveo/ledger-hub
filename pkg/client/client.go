@@ -55,6 +55,7 @@ type Command struct {
 
 type Envelope struct {
 	Code    int             `json:"code"`
+	Error   string          `json:"error,omitempty"`
 	Message string          `json:"message,omitempty"`
 	Data    json.RawMessage `json:"data,omitempty"`
 }
@@ -87,6 +88,7 @@ type Client struct {
 	keyVersion string
 	tenantID   string
 	requestID  string
+	lang       string
 	retries    int
 	http       *http.Client
 }
@@ -124,6 +126,11 @@ func (c *Client) WithTimeout(d time.Duration) *Client {
 
 func (c *Client) WithRequestID(id string) *Client {
 	c.requestID = id
+	return c
+}
+
+func (c *Client) WithLang(lang string) *Client {
+	c.lang = lang
 	return c
 }
 
@@ -282,6 +289,10 @@ func (c *Client) roundTrip(ctx context.Context, method, path string, body interf
 	}
 	if tenant != "" {
 		req.Header.Set("X-Tenant-Id", tenant)
+	}
+	if c.lang != "" {
+		req.Header.Set("Lang", c.lang)
+		req.Header.Set("Accept-Language", c.lang)
 	}
 	req.Header.Set("X-Signature", sign.HMACV2(c.secret, c.clientID, method, u.Path, u.RawQuery, tenant, ts, nonce, raw))
 	resp, err := c.http.Do(req)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/davveo/ledger-hub/internal/domain"
 	"github.com/davveo/ledger-hub/pkg/client"
 )
 
@@ -40,12 +41,6 @@ type MQEvent struct {
 	RelatedBizNo  string `json:"related_biz_no"`
 }
 
-type badEvent string
-
-func (e badEvent) Error() string { return string(e) }
-
-func errBadEvent(want string) error { return badEvent("event 需为 " + want) }
-
 func ApplyOrder(ctx context.Context, cli *client.Client, ev OrderEvent) (json.RawMessage, error) {
 	if ev.AssetCode == "" {
 		ev.AssetCode = "POINT"
@@ -76,7 +71,7 @@ func ApplyOrder(ctx context.Context, cli *client.Client, ev OrderEvent) (json.Ra
 		}
 		return cli.Release(ctx, cmd)
 	default:
-		return nil, errBadEvent("created/paid/cancelled")
+		return nil, domain.Keyed(domain.CodeUnknownEvent, domain.KeyUnknownEvent)
 	}
 }
 
@@ -101,7 +96,7 @@ func ApplyPay(ctx context.Context, cli *client.Client, ev PayEvent) (json.RawMes
 			RelatedBizNo: related, Holder: holder, AssetCode: ev.AssetCode, Amount: ev.Amount,
 		})
 	default:
-		return nil, errBadEvent("paid/refund")
+		return nil, domain.Keyed(domain.CodeUnknownEvent, domain.KeyUnknownEvent)
 	}
 }
 
@@ -118,6 +113,6 @@ func ApplyMQ(ctx context.Context, orderCli, payCli *client.Client, ev MQEvent) (
 			AssetCode: ev.AssetCode, Amount: ev.Amount, RelatedBizNo: ev.RelatedBizNo,
 		})
 	default:
-		return nil, errBadEvent("topic=order|pay")
+		return nil, domain.Keyed(domain.CodeUnknownEvent, domain.KeyUnknownEvent)
 	}
 }

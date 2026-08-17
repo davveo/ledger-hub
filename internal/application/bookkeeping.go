@@ -88,7 +88,7 @@ func (s *Bookkeeping) Execute(ctx context.Context, req domain.CommandRequest) (*
 	case domain.CmdReverse:
 		return s.reverse(ctx, req)
 	default:
-		return nil, domain.NewError(domain.CodeInvalidParam, "未知命令")
+		return nil, domain.Keyed(domain.CodeUnknownCommand, domain.KeyUnknownCommand)
 	}
 }
 
@@ -115,7 +115,7 @@ func (s *Bookkeeping) mutate(ctx context.Context, req domain.CommandRequest, fn 
 			return err
 		}
 		if asset.Status != domain.AssetActive {
-			return domain.NewError(domain.CodeInvalidParam, "资产未启用")
+			return domain.Keyed(domain.CodeAssetDisabled, domain.KeyAssetDisabled)
 		}
 		if err := HolderAllowed(asset, req.Holder); err != nil {
 			return err
@@ -211,7 +211,7 @@ func applyFreeze(ctx context.Context, s *Bookkeeping,
 		return nil, domain.ErrInvalidParam
 	}
 	if !asset.FreezeSupported {
-		return nil, domain.NewError(domain.CodeInvalidParam, "资产不支持冻结")
+		return nil, domain.Keyed(domain.CodeAssetFreezeUnsupported, domain.KeyAssetFreezeUnsupported)
 	}
 	if acc.Available < req.Amount && !asset.OverdraftAllowed {
 		return nil, domain.ErrInsufficient
@@ -324,7 +324,7 @@ func (s *Bookkeeping) captureOrRelease(ctx context.Context,
 			return err
 		}
 		if locked.Frozen < fz.Amount {
-			return domain.NewError(domain.CodeInternal, "冻结余额与冻结单不一致")
+			return domain.Keyed(domain.CodeFreezeLedgerMismatch, domain.KeyFreezeLedgerMismatch)
 		}
 		if err := AccountUsable(locked); err != nil {
 			return err
@@ -333,7 +333,7 @@ func (s *Bookkeeping) captureOrRelease(ctx context.Context,
 		capAmt := remain
 		if capture && req.Amount > 0 {
 			if req.Amount > remain {
-				return domain.NewError(domain.CodeInvalidParam, "Capture 金额不能大于剩余冻结")
+				return domain.Keyed(domain.CodeCaptureExceedsFreeze, domain.KeyCaptureExceedsFreeze)
 			}
 			capAmt = req.Amount
 		}
@@ -387,10 +387,10 @@ func (s *Bookkeeping) captureOrRelease(ctx context.Context,
 
 func (s *Bookkeeping) transfer(ctx context.Context, req domain.CommandRequest) (*domain.CommandResult, error) {
 	if req.ToHolder == nil || req.ToHolder.ID == "" {
-		return nil, domain.NewError(domain.CodeInvalidParam, "Transfer 需要 to holder")
+		return nil, domain.Keyed(domain.CodeTransferNeedsToHolder, domain.KeyTransferNeedsToHolder)
 	}
 	if req.ToAssetCode != "" && req.ToAssetCode != req.AssetCode {
-		return nil, domain.NewError(domain.CodeInvalidParam, "Transfer 禁止跨币种，请使用 Exchange")
+		return nil, domain.Keyed(domain.CodeTransferCrossCurrency, domain.KeyTransferCrossCurrency)
 	}
 	if req.Amount <= 0 {
 		return nil, domain.ErrInvalidParam
@@ -424,7 +424,7 @@ func (s *Bookkeeping) transferSameShard(ctx context.Context, req domain.CommandR
 			return err
 		}
 		if asset.Status != domain.AssetActive {
-			return domain.NewError(domain.CodeInvalidParam, "资产未启用")
+			return domain.Keyed(domain.CodeAssetDisabled, domain.KeyAssetDisabled)
 		}
 		if err := HolderAllowed(asset, req.Holder); err != nil {
 			return err
@@ -508,7 +508,7 @@ func (s *Bookkeeping) getOrOpenLocked(ctx context.Context, tenantID string, hold
 		return nil, err
 	}
 	if asset.Status != domain.AssetActive {
-		return nil, domain.NewError(domain.CodeInvalidParam, "资产未启用")
+		return nil, domain.Keyed(domain.CodeAssetDisabled, domain.KeyAssetDisabled)
 	}
 	if err := HolderAllowed(asset, holder); err != nil {
 		return nil, err
@@ -638,7 +638,7 @@ func validateBase(req domain.CommandRequest) error {
 	}
 	if req.Command == domain.CmdReverse {
 		if req.RelatedBizNo == "" {
-			return domain.NewError(domain.CodeInvalidParam, "Reverse 需要 related_biz_no")
+			return domain.Keyed(domain.CodeReverseNeedsRelated, domain.KeyReverseNeedsRelated)
 		}
 		return nil
 	}

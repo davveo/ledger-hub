@@ -10,6 +10,7 @@ import (
 
 	"github.com/davveo/ledger-hub/internal/application"
 	"github.com/davveo/ledger-hub/internal/domain"
+	"github.com/davveo/ledger-hub/internal/iface/errresp"
 	"github.com/davveo/ledger-hub/internal/observability"
 )
 
@@ -151,6 +152,7 @@ func (s *Server) Engine() *gin.Engine {
 
 type envelope struct {
 	Code    int         `json:"code"`
+	Error   string      `json:"error,omitempty"`
 	Message string      `json:"message,omitempty"`
 	Data    interface{} `json:"data,omitempty"`
 }
@@ -160,30 +162,7 @@ func ok(c *gin.Context, data interface{}) {
 }
 
 func fail(c *gin.Context, err error) {
-	if de, okErr := err.(*domain.Error); okErr {
-		status := http.StatusBadRequest
-		switch de.Code {
-		case domain.CodeUnauthorized, domain.CodeReplay:
-			status = http.StatusUnauthorized
-		case domain.CodeNotFound:
-			status = http.StatusNotFound
-		case domain.CodeForbidden:
-			status = http.StatusForbidden
-		case domain.CodeIdempotencyConflict:
-			status = http.StatusConflict
-		case domain.CodeInsufficient, domain.CodeFreezeStateInvalid, domain.CodeSlippage, domain.CodeCrossShard:
-			status = http.StatusUnprocessableEntity
-		case domain.CodeRateLimited:
-			status = http.StatusTooManyRequests
-		case domain.CodeNotImplemented:
-			status = http.StatusNotImplemented
-		case domain.CodeInternal:
-			status = http.StatusInternalServerError
-		}
-		c.JSON(status, envelope{Code: de.Code, Message: de.Message})
-		return
-	}
-	c.JSON(http.StatusInternalServerError, envelope{Code: domain.CodeInternal, Message: err.Error()})
+	errresp.Write(c, err)
 }
 
 type commandDTO struct {
@@ -245,7 +224,7 @@ func (s *Server) dispatchCommand(c *gin.Context) {
 func (s *Server) handleCommand(c *gin.Context, forced domain.Command) {
 	var dto commandDTO
 	if err := c.ShouldBindJSON(&dto); err != nil {
-		fail(c, domain.NewError(domain.CodeInvalidParam, err.Error()))
+		fail(c, domain.Keyed(domain.CodeJSONInvalid, domain.KeyJSONInvalid))
 		return
 	}
 	cmd := forced
@@ -260,7 +239,7 @@ func (s *Server) handleCommand(c *gin.Context, forced domain.Command) {
 	if dto.From != nil && dto.From.Amount != "" {
 		amount, err = parseAmount(dto.From.Amount)
 		if err != nil {
-			fail(c, domain.NewError(domain.CodeInvalidParam, "from.amount 必须为最小单位整数"))
+			fail(c, domain.Keyed(domain.CodeAmountFromInvalid, domain.KeyAmountFromInvalid))
 			return
 		}
 		if dto.AssetCode == "" {
@@ -273,7 +252,7 @@ func (s *Server) handleCommand(c *gin.Context, forced domain.Command) {
 		var err error
 		toAmount, err = parseAmount(dto.To.Amount)
 		if err != nil {
-			fail(c, domain.NewError(domain.CodeInvalidParam, "to.amount 必须为最小单位整数"))
+			fail(c, domain.Keyed(domain.CodeAmountToInvalid, domain.KeyAmountToInvalid))
 			return
 		}
 		toAsset = dto.To.AssetCode
@@ -284,14 +263,14 @@ func (s *Server) handleCommand(c *gin.Context, forced domain.Command) {
 		var err error
 		feeAmt, err = parseAmount(dto.Fee.Amount)
 		if err != nil {
-			fail(c, domain.NewError(domain.CodeInvalidParam, "fee.amount 必须为最小单位整数"))
+			fail(c, domain.Keyed(domain.CodeAmountFeeInvalid, domain.KeyAmountFeeInvalid))
 			return
 		}
 		feeAsset = dto.Fee.AssetCode
 	}
 	tol, err := parseAmount(dto.Tolerance)
 	if err != nil {
-		fail(c, domain.NewError(domain.CodeInvalidParam, "tolerance 必须为最小单位整数"))
+		fail(c, domain.Keyed(domain.CodeAmountToleranceInvalid, domain.KeyAmountToleranceInvalid))
 		return
 	}
 	req := domain.CommandRequest{
@@ -325,7 +304,7 @@ func (s *Server) handleCommand(c *gin.Context, forced domain.Command) {
 		if dto.Fx.QuotedAt != "" {
 			t, err := time.Parse(time.RFC3339, dto.Fx.QuotedAt)
 			if err != nil {
-				fail(c, domain.NewError(domain.CodeInvalidParam, "fx.quoted_at 需为 RFC3339"))
+				fail(c, domain.Keyed(domain.CodeTimeNotRFC3339, domain.KeyTimeNotRFC3339))
 				return
 			}
 			q.QuotedAt = t
@@ -339,7 +318,7 @@ func (s *Server) handleCommand(c *gin.Context, forced domain.Command) {
 	if dto.ExpireAt != "" {
 		t, err := time.Parse(time.RFC3339, dto.ExpireAt)
 		if err != nil {
-			fail(c, domain.NewError(domain.CodeInvalidParam, "expire_at 需为 RFC3339"))
+			fail(c, domain.Keyed(domain.CodeTimeNotRFC3339, domain.KeyTimeNotRFC3339))
 			return
 		}
 		req.ExpireAt = &t
@@ -386,7 +365,7 @@ type assetDTO struct {
 func (s *Server) registerAsset(c *gin.Context) {
 	var dto assetDTO
 	if err := c.ShouldBindJSON(&dto); err != nil {
-		fail(c, domain.NewError(domain.CodeInvalidParam, err.Error()))
+		fail(c, domain.Keyed(domain.CodeJSONInvalid, domain.KeyJSONInvalid))
 		return
 	}
 	a := &domain.Asset{
@@ -434,7 +413,7 @@ type openAccountDTO struct {
 func (s *Server) openAccount(c *gin.Context) {
 	var dto openAccountDTO
 	if err := c.ShouldBindJSON(&dto); err != nil {
-		fail(c, domain.NewError(domain.CodeInvalidParam, err.Error()))
+		fail(c, domain.Keyed(domain.CodeJSONInvalid, domain.KeyJSONInvalid))
 		return
 	}
 	acc, err := s.accounts.Open(c.Request.Context(), s.tenantID(c, dto.TenantID), dto.Holder, dto.AssetCode)
@@ -587,7 +566,7 @@ func (s *Server) triggerReconcile(c *gin.Context) {
 		} `json:"channel_lines"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
-		fail(c, domain.NewError(domain.CodeInvalidParam, err.Error()))
+		fail(c, domain.Keyed(domain.CodeJSONInvalid, domain.KeyJSONInvalid))
 		return
 	}
 	lines := make([]domain.BizLine, 0, len(body.BizLines))
@@ -744,7 +723,7 @@ func (s *Server) saveFxRate(c *gin.Context) {
 		CreatedBy  string `json:"created_by"`
 	}
 	if err := c.ShouldBindJSON(&dto); err != nil {
-		fail(c, domain.NewError(domain.CodeInvalidParam, err.Error()))
+		fail(c, domain.Keyed(domain.CodeJSONInvalid, domain.KeyJSONInvalid))
 		return
 	}
 	r := &domain.FxRate{
@@ -759,7 +738,7 @@ func (s *Server) saveFxRate(c *gin.Context) {
 	if dto.QuotedAt != "" {
 		t, err := time.Parse(time.RFC3339, dto.QuotedAt)
 		if err != nil {
-			fail(c, domain.NewError(domain.CodeInvalidParam, "quoted_at 需为 RFC3339"))
+			fail(c, domain.Keyed(domain.CodeTimeNotRFC3339, domain.KeyTimeNotRFC3339))
 			return
 		}
 		r.QuotedAt = t
@@ -786,7 +765,7 @@ func (s *Server) listFxRates(c *gin.Context) {
 		if v := c.Query("at"); v != "" {
 			t, err := time.Parse(time.RFC3339, v)
 			if err != nil {
-				fail(c, domain.NewError(domain.CodeInvalidParam, "at 需为 RFC3339"))
+				fail(c, domain.Keyed(domain.CodeTimeNotRFC3339, domain.KeyTimeNotRFC3339))
 				return
 			}
 			at = t
@@ -827,7 +806,7 @@ func (s *Server) saveTenant(c *gin.Context) {
 	}
 	var dto domain.Tenant
 	if err := c.ShouldBindJSON(&dto); err != nil {
-		fail(c, domain.NewError(domain.CodeInvalidParam, err.Error()))
+		fail(c, domain.Keyed(domain.CodeJSONInvalid, domain.KeyJSONInvalid))
 		return
 	}
 	if err := s.tenants.Save(c.Request.Context(), &dto); err != nil {
@@ -947,7 +926,7 @@ func (s *Server) reloadConfig(c *gin.Context) {
 		return
 	}
 	if err := s.reload(); err != nil {
-		fail(c, domain.NewError(domain.CodeInternal, err.Error()))
+		fail(c, domain.ErrInternal)
 		return
 	}
 	if s.limiter != nil {
@@ -998,11 +977,11 @@ func parseAmount(s string) (int64, error) {
 		return 0, nil
 	}
 	if strings.ContainsAny(s, ".eE+") {
-		return 0, domain.NewError(domain.CodeInvalidParam, "金额必须为最小单位整数")
+		return 0, domain.Keyed(domain.CodeAmountNotInteger, domain.KeyAmountNotInteger)
 	}
 	n, err := strconv.ParseInt(s, 10, 64)
 	if err != nil {
-		return 0, domain.NewError(domain.CodeInvalidParam, "金额必须为最小单位整数")
+		return 0, domain.Keyed(domain.CodeAmountNotInteger, domain.KeyAmountNotInteger)
 	}
 	return n, nil
 }
@@ -1012,23 +991,23 @@ func parseTimeRange(c *gin.Context) (*time.Time, *time.Time, error) {
 	if v := c.Query("from"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {
-			return nil, nil, domain.NewError(domain.CodeInvalidParam, "from 需为 RFC3339")
+			return nil, nil, domain.Keyed(domain.CodeTimeFromInvalid, domain.KeyTimeFromInvalid)
 		}
 		from = &t
 	}
 	if v := c.Query("to"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {
-			return nil, nil, domain.NewError(domain.CodeInvalidParam, "to 需为 RFC3339")
+			return nil, nil, domain.Keyed(domain.CodeTimeToInvalid, domain.KeyTimeToInvalid)
 		}
 		to = &t
 	}
 	if from != nil && to != nil {
 		if !from.Before(*to) {
-			return nil, nil, domain.NewError(domain.CodeInvalidParam, "from 必须早于 to")
+			return nil, nil, domain.Keyed(domain.CodeTimeOrderInvalid, domain.KeyTimeOrderInvalid)
 		}
 		if to.Sub(*from) > 366*24*time.Hour {
-			return nil, nil, domain.NewError(domain.CodeInvalidParam, "查询时间跨度不能超过 366 天")
+			return nil, nil, domain.Keyed(domain.CodeTimeSpanExceeded, domain.KeyTimeSpanExceeded)
 		}
 	}
 	return from, to, nil

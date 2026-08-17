@@ -679,7 +679,7 @@ func TestDisabledAccountRejected(t *testing.T) {
 		Command: domain.CmdCredit, TenantID: "t_default", SourceSystem: "campaign",
 		BizNo: "campaign:off2", Holder: holder, AssetCode: "POINT", Amount: 1,
 	})
-	if !domain.Is(err, domain.CodeInvalidParam) {
+	if !domain.Is(err, domain.CodeAccountDisabled) {
 		t.Fatalf("want disabled account, got %v", err)
 	}
 }
@@ -695,7 +695,7 @@ func TestHolderTypesRejected(t *testing.T) {
 		Command: domain.CmdCredit, TenantID: "t_default", SourceSystem: "campaign",
 		BizNo: "campaign:ht", Holder: domain.Holder{Type: domain.HolderUser, ID: "u1"}, AssetCode: "POINT", Amount: 1,
 	})
-	if !domain.Is(err, domain.CodeInvalidParam) {
+	if !domain.Is(err, domain.CodeHolderTypeNotAllowed) {
 		t.Fatalf("want holder type rejected, got %v", err)
 	}
 }

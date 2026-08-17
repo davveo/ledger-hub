@@ -72,7 +72,7 @@ func (s *ReconcileService) Enqueue(ctx context.Context, tenantID, date, sourceSy
 		return nil, domain.ErrInvalidParam
 	}
 	if _, err := time.Parse("2006-01-02", date); err != nil {
-		return nil, domain.NewError(domain.CodeInvalidParam, "date 需为 YYYY-MM-DD")
+		return nil, domain.Keyed(domain.CodeDateNotISO, domain.KeyDateNotISO)
 	}
 	sourceSystem, assetCode, jobType = reconKey(sourceSystem, assetCode, jobType)
 	latest, err := s.store.FindJobByKey(ctx, tenantID, date, sourceSystem, assetCode, jobType)
@@ -163,7 +163,7 @@ func (s *ReconcileService) RunJob(ctx context.Context, jobID string) (*Reconcile
 		job.Status = domain.ReconJobFailed
 		job.Note = "date 需为 YYYY-MM-DD"
 		_ = s.store.UpdateJob(ctx, job)
-		return nil, domain.NewError(domain.CodeInvalidParam, "date 需为 YYYY-MM-DD")
+		return nil, domain.Keyed(domain.CodeDateNotISO, domain.KeyDateNotISO)
 	}
 	from := day.UTC()
 	to := from.Add(24 * time.Hour)

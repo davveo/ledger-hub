@@ -10,7 +10,7 @@ import (
 
 func (s *Bookkeeping) exchange(ctx context.Context, req domain.CommandRequest) (*domain.CommandResult, error) {
 	if req.ToAssetCode == "" || req.ToAssetCode == req.AssetCode {
-		return nil, domain.NewError(domain.CodeInvalidParam, "Exchange 需要不同的 to.asset_code")
+		return nil, domain.Keyed(domain.CodeExchangeSameAsset, domain.KeyExchangeSameAsset)
 	}
 	if req.Amount <= 0 {
 		return nil, domain.ErrInvalidParam
@@ -58,7 +58,7 @@ func (s *Bookkeeping) exchange(ctx context.Context, req domain.CommandRequest) (
 			req.ToAmount = expected
 		}
 		if req.ToAmount <= 0 {
-			return domain.NewError(domain.CodeInvalidParam, "兑换目标金额无效")
+			return domain.Keyed(domain.CodeExchangeAmountInvalid, domain.KeyExchangeAmountInvalid)
 		}
 		if !WithinTolerance(expected, req.ToAmount, req.Tolerance) {
 			return domain.ErrSlippage
@@ -233,7 +233,7 @@ func (s *Bookkeeping) requireAsset(ctx context.Context, tenantID, code string) (
 		return nil, err
 	}
 	if a.Status != domain.AssetActive {
-		return nil, domain.NewError(domain.CodeInvalidParam, "资产未启用")
+		return nil, domain.Keyed(domain.CodeAssetDisabled, domain.KeyAssetDisabled)
 	}
 	return a, nil
 }
@@ -270,7 +270,7 @@ func (s *Bookkeeping) resolveQuote(ctx context.Context, req domain.CommandReques
 		}
 		snap, err := s.fx.Find(ctx, req.TenantID, from.AssetCode, to.AssetCode, at)
 		if err != nil {
-			return nil, domain.NewError(domain.CodeInvalidParam, "缺少可用汇率快照")
+			return nil, domain.Keyed(domain.CodeFxRateMissing, domain.KeyFxRateMissing)
 		}
 		q.RateID = snap.RateID
 		q.Rate = snap.Rate
@@ -278,7 +278,7 @@ func (s *Bookkeeping) resolveQuote(ctx context.Context, req domain.CommandReques
 		q.QuotedAt = snap.QuotedAt
 	}
 	if q.Rate == "" {
-		return nil, domain.NewError(domain.CodeInvalidParam, "Exchange 需要汇率")
+		return nil, domain.Keyed(domain.CodeExchangeNeedsRate, domain.KeyExchangeNeedsRate)
 	}
 	return q, nil
 }

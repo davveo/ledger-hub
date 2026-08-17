@@ -18,7 +18,7 @@ func HolderAllowed(asset *domain.Asset, holder domain.Holder) error {
 			return nil
 		}
 	}
-	return domain.NewError(domain.CodeInvalidParam, "持有者类型不被该资产允许")
+	return domain.Keyed(domain.CodeHolderTypeNotAllowed, domain.KeyHolderTypeNotAllowed)
 }
 
 func AccountUsable(acc *domain.Account) error {
@@ -26,7 +26,7 @@ func AccountUsable(acc *domain.Account) error {
 		return domain.ErrNotFound
 	}
 	if acc.Status == domain.AccountDisabled {
-		return domain.NewError(domain.CodeInvalidParam, "账户已停用")
+		return domain.Keyed(domain.CodeAccountDisabled, domain.KeyAccountDisabled)
 	}
 	return nil
 }

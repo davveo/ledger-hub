@@ -73,7 +73,7 @@ func (s *AccountService) Open(ctx context.Context, tenantID string, holder domai
 		return nil, err
 	}
 	if asset.Status != domain.AssetActive {
-		return nil, domain.NewError(domain.CodeInvalidParam, "资产未启用")
+		return nil, domain.Keyed(domain.CodeAssetDisabled, domain.KeyAssetDisabled)
 	}
 	if err := HolderAllowed(asset, holder); err != nil {
 		return nil, err

@@ -98,7 +98,7 @@ func (s *Server) expirePreview(c *gin.Context) {
 	if asOf := c.Query("as_of"); asOf != "" {
 		t, err := time.Parse("2006-01-02", asOf)
 		if err != nil {
-			fail(c, domain.NewError(domain.CodeInvalidParam, "as_of 需为 YYYY-MM-DD"))
+			fail(c, domain.Keyed(domain.CodeDateNotISO, domain.KeyDateNotISO))
 			return
 		}
 		now = t
@@ -138,7 +138,7 @@ func (s *Server) runOpsJob(c *gin.Context) {
 	case "queued-reconcile":
 		run = s.jobs.DrainReconcile(c.Request.Context())
 	default:
-		fail(c, domain.NewError(domain.CodeInvalidParam, "未知作业"))
+		fail(c, domain.Keyed(domain.CodeUnknownJob, domain.KeyUnknownJob))
 		return
 	}
 	s.jobs.Record(c.Request.Context(), s.operator(c), "job:"+name, s.tenantID(c, ""), run.RunID, run.Detail)

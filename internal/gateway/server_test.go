@@ -216,7 +216,7 @@ func TestGatewayTenantUnauthorized(t *testing.T) {
 	req.Header.Set("X-Signature", sign.HMACSHA256("wallet", "s", ts, nil))
 	req.Header.Set("X-Tenant-Id", "t_other")
 	code, body := doGW(t, srv, req)
-	if code != http.StatusForbidden || jsonCode(body) != domain.CodeForbidden {
+	if code != http.StatusForbidden || jsonCode(body) != domain.CodeTenantNotAllowed {
 		t.Fatalf("foreign tenant want 403/40301 got %d body=%s", code, body)
 	}
 }

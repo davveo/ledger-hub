@@ -9,7 +9,7 @@ import (
 
 func (s *Bookkeeping) reverse(ctx context.Context, req domain.CommandRequest) (*domain.CommandResult, error) {
 	if req.RelatedBizNo == "" {
-		return nil, domain.NewError(domain.CodeInvalidParam, "Reverse 需要 related_biz_no")
+		return nil, domain.Keyed(domain.CodeReverseNeedsRelated, domain.KeyReverseNeedsRelated)
 	}
 	orig, err := s.entries.ListByBizNo(ctx, req.TenantID, req.RelatedBizNo)
 	if err != nil {
@@ -29,7 +29,7 @@ func (s *Bookkeeping) reverse(ctx context.Context, req domain.CommandRequest) (*
 	}
 	for _, e := range orig {
 		if e.Command == domain.CmdReverse {
-			return nil, domain.NewError(domain.CodeInvalidParam, "不能对冲正流水再冲正，请对原单 related_biz_no")
+			return nil, domain.Keyed(domain.CodeReverseAlreadyReversed, domain.KeyReverseAlreadyReversed)
 		}
 	}
 	if req.Holder.ID == "" {
@@ -90,7 +90,7 @@ func (s *Bookkeeping) reverse(ctx context.Context, req domain.CommandRequest) (*
 					continue
 				}
 				if acc.Frozen < fz.Amount {
-					return domain.NewError(domain.CodeInternal, "冻结余额与冻结单不一致")
+					return domain.Keyed(domain.CodeFreezeLedgerMismatch, domain.KeyFreezeLedgerMismatch)
 				}
 				acc.Frozen -= fz.Amount
 				acc.Available += fz.Amount

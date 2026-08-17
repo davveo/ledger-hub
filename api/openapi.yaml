@@ -4,7 +4,8 @@ info:
   version: "1.2.0"
   description: |
     通用账本中台 HTTP 接口。金额均为最小单位整数，JSON 用字符串传递。
-    成功信封 `{"code":0,"data":...}`；错误信封 `{"code":40001,"message":"..."}`。
+    成功信封 `{"code":0,"data":...}`；错误信封 `{"code":40010,"error":"AMOUNT_NOT_INTEGER","message":"..."}`。
+    `message` 按 `Lang` / `X-Lang` / `Accept-Language` 返回中文或英文；`code` 与 `error` 稳定、与语言无关。
     分页 `limit` 默认 50、最大 200，`offset` 从 0 开始。
     进程探针（无 /api/v1/ledger 前缀）：GET /livez、GET /readyz、GET /healthz（liveness 别名）、GET /metrics。
 servers:
@@ -647,7 +648,7 @@ components:
       content:
         application/json:
           schema: {$ref: "#/components/schemas/Envelope"}
-          example: {code: 40001, message: 金额必须为最小单位整数}
+          example: {code: 40010, error: AMOUNT_NOT_INTEGER, message: 金额必须为最小单位整数}
   schemas:
     Holder:
       type: object
@@ -688,8 +689,9 @@ components:
     Envelope:
       type: object
       properties:
-        code: {type: integer, example: 0}
-        message: {type: string}
+        code: {type: integer, example: 40010, description: 数字错误码，与语言无关}
+        error: {type: string, example: AMOUNT_NOT_INTEGER, description: 稳定英文错误键，调用方应以此分支}
+        message: {type: string, description: 按 Lang / X-Lang / Accept-Language 本地化}
         data: {type: object}
     Account:
       type: object

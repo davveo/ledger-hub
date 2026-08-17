@@ -27,6 +27,7 @@ API 前缀：
 | `X-Tenant-Id` | 当前租户；未传时使用 `gateway.default_tenant` |
 | `X-Request-Id` | 推荐传入，用于链路排查；Gateway 会转发给上游 |
 | `traceparent` | W3C 追踪；缺省时服务端生成并继续传播 |
+| `Lang` / `X-Lang` / `Accept-Language` | 错误 `message` 语言。`en` / `en-US` 英文，其余默认中文。`code` 与 `error` 不随语言变化 |
 | `Content-Type` | 写请求使用 `application/json` |
 
 运营控制台只用 `X-Console-Token`，**禁止** `?console_token=`。
@@ -65,7 +66,7 @@ Go 项目可使用 `pkg/client` 自动完成 V2 签名和请求。
 - 所有金额均为资产最小单位整数。
 - JSON 使用字符串，避免精度丢失。
 - 精度为 2 的资产中，`"1049900"` 表示 `10499.00`。
-- `amount` / `from.amount` / `to.amount` / `fee.amount` / `tolerance` 解析失败返回 `40001`，不会变成 0。
+- `amount` / `from.amount` / `to.amount` / `fee.amount` / `tolerance` 解析失败返回 `40010`–`40014`（`error` 如 `AMOUNT_NOT_INTEGER`），不会变成 0。
 - 查询 `from`/`to` 须为 RFC3339，且 `from < to`，最大跨度 366 天。
 
 ### 2.2 幂等
@@ -416,22 +417,64 @@ Connector 用于 Adapter Contract。事件带 `schema_version`（默认 1）。H
 
 ## 9. 错误码
 
-| code | HTTP | 含义 | 调用方处理 |
-|---:|---:|---|---|
-| 0 | 200 | 成功 | 使用响应数据 |
-| 40001 | 400 | 参数错误/资产未注册/金额或时间非法 | 修正参数，不要盲重试 |
-| 40100 | 401 | Gateway 鉴权失败 | 检查 client、时间戳、签名、密钥版本 |
-| 40102 | 401 | nonce 重放 | 换新 nonce 后重试 |
-| 40301 | 403 | ACL 无权限或 client 无权访问租户 | 检查客户端权限配置 |
-| 40401 | 404 | 账户或冻结单不存在 | 核对租户、ID 和业务号（跨租户也是 404） |
-| 40901 | 409 | 幂等键相同但参数不同 | 停止重试并调查业务号 |
-| 42201 | 422 | 余额不足 | 引导充值或更换方式 |
-| 42202 | 422 | 冻结状态不允许操作 | 查询冻结单最新状态 |
-| 42203 | 422 | 兑换滑点超限 | 刷新报价并重新确认 |
-| 42204 | 422 | 跨分片路径异常 | 记录业务号并联系平台 |
-| 42901 | 429 | 触发业务限额 | 稍后重试或走风控流程 |
-| 50000 | 500 | 内部错误 | 保持原 biz_no 安全重试 |
-| 50101 | 501 | 能力未实现 | 不应重试 |
+失败响应固定为：
+
+```json
+{"code":40010,"error":"AMOUNT_NOT_INTEGER","message":"金额必须为最小单位整数"}
+```
+
+- `code`：数字错误码，与语言无关。HTTP 状态 = `code / 100`（如 40010→400，40102→401，50300→503）。
+- `error`：稳定英文键，**调用方应按此分支**。
+- `message`：按请求头 `Lang`、`X-Lang` 或 `Accept-Language` 返回中文或英文；缺省中文。
+
+| code | error | HTTP | 含义 |
+|---:|---|---:|---|
+| 0 | | 200 | 成功 |
+| 40001 | INVALID_PARAM | 400 | 通用参数错误 |
+| 40002 | JSON_INVALID | 400 | JSON 或必填字段 |
+| 40010 | AMOUNT_NOT_INTEGER | 400 | 金额不是最小单位整数 |
+| 40011–40014 | AMOUNT_FROM/TO/FEE/TOLERANCE_INVALID | 400 | 对应金额字段非法 |
+| 40020–40025 | TIME_* / DATE_NOT_ISO | 400 | 时间或日期非法 |
+| 40031 | ASSET_DISABLED | 400 | 资产未启用 |
+| 40032 | ASSET_FREEZE_UNSUPPORTED | 400 | 资产不支持冻结 |
+| 40033 | HOLDER_TYPE_NOT_ALLOWED | 400 | 持有者类型不允许 |
+| 40034 | ACCOUNT_DISABLED | 400 | 账户已停用 |
+| 40036 | CAPTURE_EXCEEDS_FREEZE | 400 | Capture 超过剩余冻结 |
+| 40037 | TRANSFER_NEEDS_TO_HOLDER | 400 | Transfer 缺 to_holder |
+| 40038 | TRANSFER_CROSS_CURRENCY | 400 | Transfer 禁止跨币种 |
+| 40039–40043 | EXCHANGE_* / FX_* | 400 | 兑换或汇率 |
+| 40044–40045 | REVERSE_* | 400 | 冲正参数 |
+| 40046 | UNKNOWN_JOB | 400 | 未知作业 |
+| 40047–40048 | SAGA_* | 400/500 | Saga 状态 |
+| 40049 | UNKNOWN_TENANT | 400 | 未知租户 |
+| 40100 | UNAUTHORIZED | 401 | 通用鉴权失败 |
+| 40102 | REPLAY | 401 | nonce 重放 |
+| 40110 | CONSOLE_TOKEN_IN_QUERY | 401 | console_token 出现在 query |
+| 40111 | UNKNOWN_CLIENT | 401 | 未知 client_id |
+| 40112 | MISSING_SIGNATURE | 401 | 缺少签名 |
+| 40113–40114 | TIMESTAMP_* | 401 | 时间戳无效或超窗 |
+| 40115 | UNKNOWN_KEY_VERSION | 401 | 未知密钥版本 |
+| 40116 | SIGN_VERSION_UNSUPPORTED | 401 | 不支持的签名版本 |
+| 40117 | NONCE_REQUIRED | 401 | V2 缺 nonce |
+| 40118 | SIGNATURE_MISMATCH | 401 | 签名不匹配 |
+| 40301 | FORBIDDEN | 403 | ACL 无权 |
+| 40310 | SOURCE_SYSTEM_MISMATCH | 403 | source_system ≠ client_id |
+| 40311 | TENANT_HEADER_MISMATCH | 403 | Header 与 body 租户不一致 |
+| 40312 | TENANT_NOT_ALLOWED | 403 | client 无权访问该租户 |
+| 40313 | TENANT_DISABLED | 403 | 租户已停用 |
+| 40401 | NOT_FOUND | 404 | 不存在；跨租户同样 404 |
+| 40901 | IDEMPOTENCY_CONFLICT | 409 | 幂等键相同参数不同 |
+| 42201 | INSUFFICIENT_BALANCE | 422 | 余额不足 |
+| 42202 | FREEZE_STATE_INVALID | 422 | 冻结单非 frozen |
+| 42203 | SLIPPAGE_EXCEEDED | 422 | 兑换滑点超限 |
+| 42204 | CROSS_SHARD_FORBIDDEN | 422 | 跨分片路径异常 |
+| 42901 | RATE_LIMITED | 429 | 限额或 RPS |
+| 50000 | INTERNAL_ERROR | 500 | 内部错误 |
+| 50010 | OPTIMISTIC_LOCK | 500 | 账户乐观锁冲突，可重试 |
+| 50011–50013 | SAGA_FAILED / COMPENSATED / FREEZE_LEDGER_MISMATCH | 500 | 一致性异常 |
+| 50101 | NOT_IMPLEMENTED | 501 | 能力未装配 |
+| 50200 | UPSTREAM_ERROR | 502 | Connector 调账本失败 |
+| 50300 | NOT_READY | 503 | /readyz 未就绪 |
 
 HTTP `401` 表示 Gateway 鉴权失败，检查 client ID、时间戳、签名、nonce、密钥版本和租户授权。
 

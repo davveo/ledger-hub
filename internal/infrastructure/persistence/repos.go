@@ -149,7 +149,7 @@ func (r *AccountRepo) UpdateBalances(ctx context.Context, a *domain.Account) err
 		return res.Error
 	}
 	if res.RowsAffected == 0 {
-		return domain.NewError(domain.CodeInternal, "账户乐观锁冲突，请重试")
+		return domain.Keyed(domain.CodeOptimisticLock, domain.KeyOptimisticLock)
 	}
 	a.Version++
 	return nil

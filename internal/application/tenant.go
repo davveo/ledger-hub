@@ -57,10 +57,10 @@ func (s *TenantService) Ensure(ctx context.Context, tenantID string) error {
 	}
 	t, err := s.store.Get(ctx, tenantID)
 	if err != nil {
-		return domain.NewError(domain.CodeInvalidParam, "未知租户")
+		return domain.Keyed(domain.CodeUnknownTenant, domain.KeyUnknownTenant)
 	}
 	if t.Status != "active" {
-		return domain.NewError(domain.CodeForbidden, "租户已停用")
+		return domain.Keyed(domain.CodeTenantDisabled, domain.KeyTenantDisabled)
 	}
 	return nil
 }
