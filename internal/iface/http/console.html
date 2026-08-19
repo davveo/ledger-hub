@@ -39,8 +39,12 @@
     button.ghost { background: transparent; border: 1px solid #334155; color: var(--text); }
     button.warn { background: #9f1239; }
     button.ok { background: #065f46; }
-    button:disabled { opacity: .5; cursor: not-allowed; }
+    button:disabled { opacity: .5; cursor: not-allowed; pointer-events: auto; }
     .muted { color: var(--muted); font-size: 12px; }
+    .btn-tip { position: fixed; z-index: 40; display: none; max-width: 320px; padding: 8px 10px;
+      background: #0b1220; border: 1px solid #334155; border-radius: 8px; color: #e2e8f0;
+      font-size: 12px; line-height: 1.55; box-shadow: 0 12px 32px rgba(0,0,0,.45); pointer-events: none; }
+    .btn-tip.show { display: block; }
     .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
     .stat { background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
     .stat .k { color: var(--muted); font-size: 12px; }
@@ -96,7 +100,7 @@
     </div>
     <div class="row">
       <input id="loginOp" placeholder="操作人，如 ops_zhang" style="flex:1;min-width:0"/>
-      <button onclick="unlock()">进入</button>
+      <button data-tip="用 Token 和操作人进入后台。直连 :8080 可不填 Token。" onclick="unlock()">进入</button>
     </div>
   </div>
 </div>
@@ -127,12 +131,14 @@
       <select id="tenantSel" onchange="onTenant()"></select>
       <input id="operator" placeholder="操作人" style="min-width:120px"/>
       <input id="token" placeholder="Console Token" style="min-width:180px"/>
-      <button class="ghost" onclick="saveSession()">保存</button>
+      <button class="ghost" data-tip="把 Token、操作人写入本机，后续请求都会带上。" onclick="saveSession()">保存</button>
+      <button class="warn" data-tip="清除本机 Token 和操作人，回到登录页。租户选择会保留。" onclick="logout()">退出</button>
     </header>
     <div class="content" id="view"></div>
   </section>
 </div>
 <div id="toast" class="toast"></div>
+<div id="btnTip" class="btn-tip" role="tooltip"></div>
 <div id="modalBackdrop" class="modal-backdrop" aria-hidden="true">
   <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-describedby="modalMessage">
     <div class="modal-head">
@@ -174,6 +180,7 @@ function roleLabel(role) {
 }
 function page() { return (location.hash.replace(/^#\/?/, '') || 'dashboard').split('?')[0]; }
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function tip(s) { return ` data-tip="${esc(s)}"`; }
 function v(row, ...keys) {
   if (!row) return '';
   for (const k of keys) {
@@ -301,8 +308,8 @@ function table(cols, rows, render) {
 function showLogin() {
   $('login').classList.remove('hidden');
   $('app').classList.add('hidden');
-  $('loginToken').value = localStorage.getItem(TOKEN_KEY) || 'dev-console-token';
-  if ($('loginOp')) $('loginOp').value = localStorage.getItem(OP_KEY) || 'console';
+  $('loginToken').value = localStorage.getItem(TOKEN_KEY) || '';
+  if ($('loginOp')) $('loginOp').value = localStorage.getItem(OP_KEY) || '';
 }
 function unlock() {
   localStorage.setItem(TOKEN_KEY, $('loginToken').value.trim());
@@ -315,6 +322,22 @@ function saveSession() {
   localStorage.setItem(OP_KEY, ($('operator') && $('operator').value.trim()) || 'console');
   toast('已保存 Token / 操作人');
   Promise.all([loadOverview(), loadMe()]).then(render);
+}
+async function logout() {
+  const confirmed = await confirmDialog('退出后台', '将清除本机保存的 Token 和操作人，并回到登录页。租户选择会保留。', {
+    danger: true,
+    confirmText: '退出'
+  });
+  if (!confirmed) return;
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(OP_KEY);
+  overview = {};
+  consoleRole = 'admin';
+  if ($('token')) $('token').value = '';
+  if ($('operator')) $('operator').value = '';
+  hideButtonTip();
+  showLogin();
+  toast('已退出');
 }
 function saveToken() { saveSession(); }
 function onTenant() {
@@ -411,9 +434,9 @@ function viewAssets() {
         <input id="assetClass" placeholder="asset_class 如 point / fiat"/>
         <input id="assetHolders" placeholder="holder_types 逗号分隔" value="user,merchant"/>
         <label class="muted"><input type="checkbox" id="assetFreeze" checked/> 支持冻结</label>
-        <button ${ro('admin')} onclick="saveAsset()">登记</button>
-        <button class="warn" ${ro('admin')} onclick="assetStatus('disable')">下线</button>
-        <button class="ok" ${ro('admin')} onclick="assetStatus('enable')">启用</button>
+        <button ${ro('admin')}${tip('登记或更新资产定义。下线前须先停用。')} onclick="saveAsset()">登记</button>
+        <button class="warn" ${ro('admin')}${tip('下线后该资产禁止再记账，已有余额保留。')} onclick="assetStatus('disable')">下线</button>
+        <button class="ok" ${ro('admin')}${tip('重新允许该资产记账。')} onclick="assetStatus('enable')">启用</button>
       </div>
     </div>
     <div class="card"><h3>资产列表</h3>${table(
@@ -422,7 +445,7 @@ function viewAssets() {
        {label:'冻结', value: r => v(r,'freeze_supported') ? '是' : '否'},
        {label:'状态', html:true, value: r => badge(v(r,'status'))}],
       overview.assets || [],
-      r => `<button class="ghost" onclick="fillAsset('${esc(v(r,'asset_code'))}')">选用</button>`
+      r => `<button class="ghost"${tip('把这行填到上方表单，便于下线或启用。')} onclick="fillAsset('${esc(v(r,'asset_code'))}')">选用</button>`
     )}</div>`;
 }
 
@@ -433,15 +456,15 @@ function viewTenants() {
       <div class="row">
         <input id="tenantId" placeholder="tenant_id"/>
         <input id="tenantName" placeholder="名称"/>
-        <button ${ro('admin')} onclick="saveTenant()">保存</button>
-        <button class="warn" ${ro('admin')} onclick="tenantStatus('disable')">停用</button>
-        <button class="ok" ${ro('admin')} onclick="tenantStatus('enable')">启用</button>
+        <button ${ro('admin')}${tip('新建或更新租户名称与状态。')} onclick="saveTenant()">保存</button>
+        <button class="warn" ${ro('admin')}${tip('停用后该租户记账会被拒绝，查询仍可用。')} onclick="tenantStatus('disable')">停用</button>
+        <button class="ok" ${ro('admin')}${tip('恢复该租户记账。')} onclick="tenantStatus('enable')">启用</button>
       </div>
     </div>
     <div class="card"><h3>租户列表</h3>${table(
       [{label:'ID', key:'tenant_id', mono:true}, {label:'名称', key:'name'}, {label:'状态', html:true, value: r => badge(v(r,'status'))}],
       overview.tenants || [],
-      r => `<button class="ghost" onclick="fillTenant('${esc(v(r,'tenant_id'))}','${esc(v(r,'name'))}')">选用</button>`
+      r => `<button class="ghost"${tip('把这行填到上方表单。')} onclick="fillTenant('${esc(v(r,'tenant_id'))}','${esc(v(r,'name'))}')">选用</button>`
     )}</div>`;
 }
 
@@ -454,7 +477,7 @@ function viewAccounts() {
         <select id="holderType"><option>user</option><option>merchant</option><option>system_subject</option></select>
         <input id="qAsset" placeholder="asset_code 可空"/>
         <button onclick="searchAccounts()">查询</button>
-        <button class="ghost" ${ro('admin')} onclick="openAccount()">开户</button>
+        <button class="ghost" ${ro('admin')}${tip('为持有人开指定资产账户。已存在则返回该户，不会加减余额。')} onclick="openAccount()">开户</button>
       </div>
       <p class="muted">不填 holder 时列出当前租户账户。行内可停用 / 启用，禁止再记账。</p>
     </div>
@@ -480,7 +503,7 @@ function viewEntries() {
         <input id="revBiz" placeholder="原 biz_no"/>
         <input id="revSrc" placeholder="source_system" value="wallet"/>
         <input id="revNew" placeholder="新 biz_no 可空自动生成"/>
-        <button class="warn" ${ro('correction')} onclick="doReverse()">冲正</button>
+        <button class="warn" ${ro('correction')}${tip('用新 biz_no 冲正原单，原流水保留。禁止直接改余额，不能对冲正单再冲正。')} onclick="doReverse()">冲正</button>
       </div>
     </div>
     <div class="card"><h3>流水</h3><div id="entryTable"></div>
@@ -501,7 +524,7 @@ function viewFreezes() {
         <input id="fAsset" placeholder="asset_code 可空"/>
         <select id="fStatus"><option value="">全部状态</option><option>frozen</option><option>captured</option><option>released</option></select>
         <button onclick="searchFreezes()">查询</button>
-        <button class="ghost" onclick="loadFreezeQueues()">刷新队列</button>
+        <button class="ghost"${tip('刷新过期待释放和在途冻结两张队列，不必填持有人。')} onclick="loadFreezeQueues()">刷新队列</button>
       </div>
       <p class="muted">确认走 order Capture；取消走 order Release；超时释放走 worker Release。金额按资产精度展示。</p>
     </div>
@@ -516,13 +539,13 @@ function viewJobs() {
     <div class="card">
       <h3>手动触发 Worker 作业</h3>
       <div class="row">
-        <button ${ro('jobs')} onclick="runJob('release_expired')">释放过期冻结</button>
-        <button ${ro('jobs')} onclick="runJob('reconcile')">日终对账</button>
-        <button ${ro('jobs')} onclick="runJob('expire')">资产过期入账</button>
-        <button ${ro('jobs')} onclick="runJob('fx_feed')">汇率 Feed</button>
-        <button class="ghost" ${ro('jobs')} onclick="runJob('idempotency')">清理幂等</button>
-        <button class="ghost" ${ro('jobs')} onclick="runJob('saga')">续跑 Saga</button>
-        <button class="ghost" ${ro('jobs')} onclick="runJob('queued-reconcile')">领取排队对账</button>
+        <button ${ro('jobs')}${tip('立刻扫描已到期仍 frozen 的冻结单并 Release，金额退回可用。')} onclick="runJob('release_expired')">释放过期冻结</button>
+        <button ${ro('jobs')}${tip('按今天为各租户入队日终对账，由 Worker 领取执行。')} onclick="runJob('reconcile')">日终对账</button>
+        <button ${ro('jobs')}${tip('按过期策略把到期积分转到 point_sink。未命中策略则不动账。')} onclick="runJob('expire')">资产过期入账</button>
+        <button ${ro('jobs')}${tip('按配置写入汇率快照，账本不负责行情对错。')} onclick="runJob('fx_feed')">汇率 Feed</button>
+        <button class="ghost" ${ro('jobs')}${tip('删除超过保留期的幂等记录，不影响已入账流水。')} onclick="runJob('idempotency')">清理幂等</button>
+        <button class="ghost" ${ro('jobs')}${tip('扫描未完成跨分片 Saga 并续跑。带演示标记的不会动真账。')} onclick="runJob('saga')">续跑 Saga</button>
+        <button class="ghost" ${ro('jobs')}${tip('领取已排队的对账任务并执行，适合积压 queued。')} onclick="runJob('queued-reconcile')">领取排队对账</button>
       </div>
       <p class="muted">结果写入作业记录。过期入账仅在策略命中时过账；试算不记账。</p>
     </div>
@@ -530,7 +553,7 @@ function viewJobs() {
       <h3>过期试算</h3>
       <div class="row">
         <input id="expireAsOf" placeholder="YYYY-MM-DD" value="${nextYear}-01-01"/>
-        <button class="ghost" onclick="loadExpirePreview()">试算</button>
+        <button class="ghost"${tip('不记账。按指定日期列出将过期的金额，默认明年 1 月 1 日便于看 year_end。')} onclick="loadExpirePreview()">试算</button>
       </div>
       <div id="expirePreview"></div>
     </div>
@@ -566,8 +589,8 @@ function viewAudit() {
         <input id="auditFrom" placeholder="from YYYY-MM-DD" type="date"/>
         <input id="auditTo" placeholder="to YYYY-MM-DD" type="date" value="${today}"/>
         <button class="ghost" onclick="loadAudit()">查询</button>
-        <button class="ghost" onclick="exportAudit('audits')">导出网关 CSV</button>
-        <button class="ghost" onclick="exportAudit('actions')">导出操作 CSV</button>
+        <button class="ghost" onclick="exportAudit('audits')"${tip('导出当前筛选下的网关请求审计，CSV 不含 JSON 信封。')}>导出网关 CSV</button>
+        <button class="ghost" onclick="exportAudit('actions')"${tip('导出冲正、关差异、手动作业等运营操作审计。')}>导出操作 CSV</button>
       </div>
       <p class="muted">按租户 / 操作人 / client / 时间筛选。日期 to 含当天。导出不走 JSON 信封。</p>
     </div>
@@ -586,7 +609,7 @@ function viewFx() {
         <input id="quote" placeholder="quote 如 BALANCE_USD"/>
         <input id="rate" placeholder="rate 如 0.14000000"/>
         <input id="rateSrc" placeholder="rate_source" value="manual"/>
-        <button ${ro('admin')} onclick="saveRate()">保存</button>
+        <button ${ro('admin')}${tip('写入汇率快照。兑换必须引用有效 rate_id，账本不校验行情对错。')} onclick="saveRate()">保存</button>
       </div>
       <p class="muted">账本只存快照，不负责行情对错。兑换必须引用有效 rate_id。</p>
     </div>
@@ -606,8 +629,8 @@ function viewRecon() {
         <input id="reconDate" placeholder="YYYY-MM-DD" value="${today}"/>
         <input id="reconSys" placeholder="source_system 可空"/>
         <input id="reconAsset" placeholder="asset_code 可空"/>
-        <button ${ro('jobs')} onclick="runRecon()">跑对账</button>
-        <button class="ghost" onclick="loadReport()">按日期查看</button>
+        <button ${ro('jobs')}${tip('入队日终对账（202）。不传业务清单也会跑余额/冻结/兑换勾稽。')} onclick="runRecon()">跑对账</button>
+        <button class="ghost"${tip('按日期查看对账报告、差异和摘要。')} onclick="loadReport()">按日期查看</button>
       </div>
       <p class="muted">不传业务清单也会跑 L2 余额勾稽、L3 冻结、L4 兑换完整性。</p>
     </div>
@@ -617,8 +640,8 @@ function viewRecon() {
         <input id="diffId" placeholder="diff_id"/>
         <input id="diffNote" placeholder="关闭说明"/>
         <input id="diffAssignee" placeholder="指派给"/>
-        <button ${ro('correction')} onclick="resolveDiff()">关闭差异</button>
-        <button class="ghost" ${ro('correction')} onclick="assignDiff()">指派</button>
+        <button ${ro('correction')}${tip('关闭这条对账差异工单，需填写说明。不会自动改余额。')} onclick="resolveDiff()">关闭差异</button>
+        <button class="ghost" ${ro('correction')}${tip('把差异指派给处理人，便于跟进。')} onclick="assignDiff()">指派</button>
         <button class="ghost" onclick="loadOpenDiffs()">刷新待关闭</button>
       </div>
       <div id="openDiffTable"><p class="muted">加载中…</p></div>
@@ -633,7 +656,7 @@ function viewRisk() {
     <div class="card">
       <h3>配置热加载</h3>
       <div class="row">
-        <button ${ro('jobs')} onclick="reloadCfg()">重载 ACL / 限额</button>
+        <button ${ro('jobs')}${tip('立刻重读 yaml 里的 ACL 与限额，并写入配置版本。改文件后也可等 API 15 秒自动扫描。')} onclick="reloadCfg()">重载 ACL / 限额</button>
         <span class="muted">改 yaml 后点这里，或等 API 15s 扫描 mtime。</span>
       </div>
       <p class="muted" id="cfgRevLine">配置版本：加载中…</p>
@@ -705,9 +728,9 @@ async function searchAccounts() {
       const id = v(r,'account_id');
       const st = String(v(r,'status'));
       const op = st === 'disabled' ? 'enable' : 'disable';
-      const accBtn = can('admin') ? `<button class="ghost" onclick="setAcc('${esc(id)}','${op}')">${op === 'disable' ? '停用' : '启用'}</button>` : '';
+      const accBtn = can('admin') ? `<button class="ghost"${tip(op === 'disable' ? '停用后该账户禁止再记账，余额保留。' : '恢复该账户记账。')} onclick="setAcc('${esc(id)}','${op}')">${op === 'disable' ? '停用' : '启用'}</button>` : '';
       return `${accBtn}
-        <button class="ghost" onclick="gotoEntries('${esc(v(r,'holder_id'))}','${esc(v(r,'holder_type'))}','${esc(v(r,'asset_code'))}')">流水</button>`;
+        <button class="ghost"${tip('跳到流水页并带上该持有人。')} onclick="gotoEntries('${esc(v(r,'holder_id'))}','${esc(v(r,'holder_type'))}','${esc(v(r,'asset_code'))}')">流水</button>`;
     }
   );
 }
@@ -753,8 +776,8 @@ async function searchEntries(keep) {
      {label:'journal', key:'journal_id', mono:true},
      {label:'余额后', html:true, mono:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'available_after')))}],
     rows,
-    r => `<button class="ghost" onclick="showJournal('${esc(v(r,'journal_id'))}')">凭证</button>
-          <button class="ghost" onclick="prepReverse('${esc(v(r,'biz_no'))}','${esc(v(r,'source_system'))}')">冲正</button>`
+    r => `<button class="ghost"${tip('查看该分录所属会计凭证。')} onclick="showJournal('${esc(v(r,'journal_id'))}')">凭证</button>
+          <button class="ghost"${tip('填入上方冲正表单，不会立刻记账。')} onclick="prepReverse('${esc(v(r,'biz_no'))}','${esc(v(r,'source_system'))}')">冲正</button>`
   );
 }
 function pageEntries(dir) {
@@ -797,8 +820,8 @@ function freezeActions(r, expired) {
   const asset = esc(v(r,'asset_code'));
   const amt = esc(v(r,'amount'));
   const src = expired ? 'worker' : 'order';
-  return `<button class="ok" onclick="doCapture('${id}','${asset}','${amt}')">确认</button>
-    <button class="warn" onclick="doRelease('${id}','${asset}','${src}')">释放</button>`;
+  return `<button class="ok"${tip('Capture：确认冻结并扣减冻结金额，可部分确认。走 order。')} onclick="doCapture('${id}','${asset}','${amt}')">确认</button>
+    <button class="warn"${tip(expired ? 'Release：超时释放，金额退回可用。走 worker。' : 'Release：取消冻结，金额退回可用。走 order。')} onclick="doRelease('${id}','${asset}','${src}')">释放</button>`;
 }
 function freezeTable(rows, expired) {
   return table(
@@ -873,8 +896,8 @@ async function refreshRecon() {
       [{label:'Job', key:'job_id', mono:true}, {label:'日期', key:'date'}, {label:'系统', key:'source_system'}, {label:'资产', key:'asset_code'},
        {label:'版本', key:'version'}, {label:'状态', html:true, value: r => badge(v(r,'status'))}, {label:'时间', key:'created_at'}],
       list,
-      r => `<button class="ghost" onclick="openJob('${esc(v(r,'job_id'))}')">查看</button>
-        ${can('jobs') ? `<button class="ghost" onclick="rerunJob('${esc(v(r,'job_id'))}')">重跑</button>` : ''}`
+      r => `<button class="ghost"${tip('打开该对账任务的报告和差异。')} onclick="openJob('${esc(v(r,'job_id'))}')">查看</button>
+        ${can('jobs') ? `<button class="ghost"${tip('升版本重跑该对账任务，已关闭差异不会自动重开。')} onclick="rerunJob('${esc(v(r,'job_id'))}')">重跑</button>` : ''}`
     );
   } catch (e) { $('jobTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
   try {
@@ -882,7 +905,7 @@ async function refreshRecon() {
     $('fileTable').innerHTML = table(
       [{label:'文件', key:'name', mono:true}, {label:'大小', key:'size'}, {label:'修改时间', key:'mod_time'}],
       files.data || [],
-      r => `<button class="ghost" onclick="downloadFile('${esc(v(r,'name'))}')">下载</button>`
+      r => `<button class="ghost"${tip('下载对账文件。经网关时走请求头 Token，不会把 Token 放进 URL。')} onclick="downloadFile('${esc(v(r,'name'))}')">下载</button>`
     );
   } catch (e) { $('fileTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
 }
@@ -898,7 +921,7 @@ async function loadOpenDiffs() {
        {label:'账本金额', html:true, mono:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'ledger_amount')))},
        {label:'状态', html:true, value: r => badge(v(r,'status'))}],
       rows,
-      r => v(r,'status') === 'open' ? `<button class="ghost" onclick="fillDiff('${esc(v(r,'diff_id'))}')">选用</button>` : ''
+      r => v(r,'status') === 'open' ? `<button class="ghost"${tip('把 diff_id 填到上方，便于关闭或指派。')} onclick="fillDiff('${esc(v(r,'diff_id'))}')">选用</button>` : ''
     );
   } catch (e) { $('openDiffTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
 }
@@ -935,7 +958,7 @@ function showReport(data) {
      {label:'账本金额', html:true, value: r => esc(fmtAmt(v(r,'asset_code'), v(r,'ledger_amount')))},
      {label:'状态', html:true, value: r => badge(v(r,'status'))}],
     diffs,
-    r => v(r,'status') === 'open' ? `<button class="ghost" onclick="fillDiff('${esc(v(r,'diff_id'))}')">选用</button>` : ''
+    r => v(r,'status') === 'open' ? `<button class="ghost"${tip('把 diff_id 填到上方，便于关闭或指派。')} onclick="fillDiff('${esc(v(r,'diff_id'))}')">选用</button>` : ''
   );
 }
 function fillDiff(id) { $('diffId').value = id; }
@@ -1014,8 +1037,8 @@ async function loadSagas() {
         const id = esc(v(r,'saga_id'));
         const done = String(v(r,'status')) === 'completed';
         if (done || !can('jobs')) return '';
-        return `<button class="ghost" onclick="retrySaga('${id}')">重试</button>
-          <button class="warn" onclick="compensateSaga('${id}')">补偿</button>`;
+        return `<button class="ghost"${tip('人工续跑这一笔。演示 Saga 也会走真路径，可能因账户不存在而失败。')} onclick="retrySaga('${id}')">重试</button>
+          <button class="warn"${tip('对已转出腿做补偿回滚。完成后不再自动续跑。')} onclick="compensateSaga('${id}')">补偿</button>`;
       }
     );
   } catch (e) { $('sagaTable').innerHTML = '<p class="muted">' + esc(e.message) + '</p>'; }
@@ -1128,8 +1151,47 @@ async function exportAudit(kind) {
   URL.revokeObjectURL(url);
 }
 
-window.addEventListener('hashchange', () => { try { render(); } catch (e) { toast(e.message, true); } });
+window.addEventListener('hashchange', () => {
+  hideButtonTip();
+  try { render(); } catch (e) { toast(e.message, true); }
+});
 window.addEventListener('unhandledrejection', ev => toast(String(ev.reason && ev.reason.message || ev.reason), true));
+
+function hideButtonTip() {
+  const box = $('btnTip');
+  if (box) box.classList.remove('show');
+}
+function bindButtonTips() {
+  const box = $('btnTip');
+  if (!box) return;
+  function place(el) {
+    const text = el.getAttribute('data-tip');
+    if (!text) return hideButtonTip();
+    box.textContent = text;
+    box.classList.add('show');
+    const r = el.getBoundingClientRect();
+    const tw = box.offsetWidth;
+    const th = box.offsetHeight;
+    let left = r.left + (r.width - tw) / 2;
+    let top = r.bottom + 8;
+    if (left < 8) left = 8;
+    if (left + tw > innerWidth - 8) left = innerWidth - tw - 8;
+    if (top + th > innerHeight - 8) top = Math.max(8, r.top - th - 8);
+    box.style.left = left + 'px';
+    box.style.top = top + 'px';
+  }
+  document.addEventListener('mouseover', e => {
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    if (el) place(el);
+  });
+  document.addEventListener('mouseout', e => {
+    const el = e.target.closest && e.target.closest('[data-tip]');
+    if (!el) return;
+    if (e.relatedTarget && el.contains(e.relatedTarget)) return;
+    hideButtonTip();
+  });
+  document.addEventListener('scroll', hideButtonTip, true);
+}
 
 async function boot() {
   $('token').value = localStorage.getItem(TOKEN_KEY) || '';
@@ -1149,6 +1211,7 @@ async function boot() {
 document.addEventListener('keydown', e => {
   if (e.key === 'Enter' && $('login') && !$('login').classList.contains('hidden')) unlock();
 });
+bindButtonTips();
 boot();
 </script>
 </body>
